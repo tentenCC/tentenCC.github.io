@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>トーナメントメーカー</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--text:#1f2328;--muted:#6b7280;--line:#d0d5dd;--primary:#2563eb;}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Hiragino Sans","Meiryo","Yu Gothic UI",system-ui,sans-serif;background:var(--bg);color:var(--text)}
+header{background:#1f2937;color:#fff;padding:14px 20px}
+header h1{margin:0;font-size:20px}
+main{display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px;padding:16px;align-items:start}
+@media (max-width:820px){main{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--card);border-radius:10px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+h2{font-size:15px;margin:0 0 8px}
+label{font-size:13px;font-weight:600;display:block;margin:12px 0 4px}
+textarea,input[type=text]{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font:inherit;font-size:14px}
+textarea{height:260px;resize:vertical}
+.check{display:flex;align-items:center;gap:6px;font-weight:normal;margin-top:10px}
+.count{font-size:12px;color:var(--muted);margin-top:4px}
+button{font:inherit;font-size:14px;padding:8px 12px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer}
+button:hover{background:#f3f4f6}
+button.primary{background:var(--primary);color:#fff;border-color:var(--primary);width:100%;margin-top:14px}
+button.primary:hover{background:#1d4ed8}
+button.on{background:#dbeafe;border-color:var(--primary);color:#1e40af}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.toolbar .spacer{flex:1}
+.hint{font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.6}
+.hint.edit{color:#1e40af}
+#bracketWrap{overflow:auto;border:1px solid var(--line);border-radius:8px;background:#fff;min-height:200px}
+#bracketWrap svg{display:block}
+.empty{padding:60px 20px;text-align:center;color:var(--muted)}
+.slot{cursor:pointer}
+.slot:hover rect{filter:brightness(.96)}
+button.roulette{width:100%;margin-top:8px;background:linear-gradient(90deg,#f59e0b,#ef4444);color:#fff;border:none;font-weight:700}
+button.roulette:hover{filter:brightness(1.06);background:linear-gradient(90deg,#f59e0b,#ef4444)}
+.modal{position:fixed;inset:0;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px}
+.modal[hidden]{display:none}
+.modal-box{background:#fff;border-radius:14px;padding:20px;width:min(460px,100%);max-height:100%;overflow:auto;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.3)}
+.modal-box h3{margin:0 0 4px;font-size:18px}
+.rTarget{font-size:14px;color:var(--muted);margin-bottom:10px}
+.wheelWrap{position:relative;width:min(340px,78vw);margin:0 auto}
+.wheelWrap .disc{border-radius:50%;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.wheelWrap canvas{width:100%;height:auto;display:block}
+.pointer{position:absolute;left:50%;top:-6px;transform:translateX(-50%);width:0;height:0;border-left:14px solid transparent;border-right:14px solid transparent;border-top:26px solid #1f2937;z-index:2;filter:drop-shadow(0 2px 2px rgba(0,0,0,.3))}
+.rCurrent{font-size:24px;font-weight:800;height:40px;line-height:40px;margin:14px 0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rTarget{min-height:2.8em;line-height:1.4}
+.rCurrent.done{color:#e0393e;animation:pop .5s ease}
+@keyframes pop{0%{transform:scale(.6)}60%{transform:scale(1.15)}100%{transform:scale(1)}}
+.rBtns{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:12px}
+.rBtns .primary{width:auto;margin:0;min-width:140px}
+.rBtns button:disabled{opacity:.45;cursor:not-allowed}
+.rLog{list-style:none;margin:12px 0 0;padding:8px 0 0;border-top:1px solid #eef0f3;max-height:110px;overflow:auto;font-size:13px;text-align:left}
+.rLog li{padding:2px 4px}
+.rLog li:first-child{font-weight:700;color:#b45309}
+.zoom{display:flex;align-items:center;gap:4px;font-size:13px}
+.zoom input{width:110px}
+.zoom #zoomVal{min-width:40px;text-align:right;color:var(--muted)}
+.zoom button{padding:6px 10px}
+#zoomOut,#zoomIn{width:32px;padding:6px 0}
+.layoutSel{display:flex;align-items:center;gap:6px;margin:0;font-size:13px}
+.layoutSel select{font:inherit;font-size:14px;padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:#fff}
+.side{display:flex;flex-direction:column;gap:16px;min-width:0}
+button.wide{width:100%}
+.row{display:flex;gap:8px;margin-top:12px}
+.row button{flex:1;font-size:13px;padding:8px 6px}
+.lib{list-style:none;margin:10px 0 0;padding:0;max-height:240px;overflow:auto}
+.lib li{display:flex;align-items:center;gap:6px;padding:6px 0;border-top:1px solid #eef0f3}
+.lib li:first-child{border-top:none}
+.lib .meta{flex:1;min-width:0}
+.lib .name{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lib .date{font-size:11px;color:var(--muted)}
+.lib button{font-size:12px;padding:4px 8px}
+.lib .none{font-size:13px;color:var(--muted);padding:6px 0}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:8px;flex-wrap:wrap}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:-2px;border:2px solid var(--c);background:var(--f)}
+</style>
+</head>
+<body>
+<header><h1>🏆 トーナメントメーカー</h1></header>
+<main>
+  <div class="side">
+  <section class="card">
+    <h2>トーナメント作成</h2>
+    <label for="title">大会名</label>
+    <input type="text" id="title" placeholder="例：社内卓球大会 2026">
+    <label for="names">参加者（1行に1人）</label>
+    <textarea id="names" placeholder="山田&#10;佐藤&#10;鈴木&#10;田中&#10;高橋"></textarea>
+    <div class="count" id="count">0 人</div>
+    <label class="check"><input type="checkbox" id="shuffle" checked> 組み合わせをシャッフルする</label>
+    <label class="check"><input type="checkbox" id="third" checked> 3位決定戦を行う</label>
+    <div class="count">オフにすると、上から順に第1シード、第2シード…として配置します。人数が2の累乗でない場合はシード上位に不戦勝（BYE）が付きます。</div>
+    <button class="primary" id="generate">トーナメント表を作成</button>
+    <button class="roulette" id="rouletteBtn">🎰 ルーレットで抽選して作成</button>
+    <div class="count">1チームずつルーレットを回して、上の枠から順に配置します。</div>
+  </section>
+
+  <section class="card">
+    <h2>保存・読み込み</h2>
+    <button class="wide" id="saveBtn">💾 現在の表をブラウザに保存</button>
+    <ul class="lib" id="lib"></ul>
+    <div class="count">ブラウザに保存した表は、このPCの同じブラウザでのみ開けます。</div>
+    <div class="row">
+      <button id="exportBtn">📤 ファイルに書き出し</button>
+      <button id="importBtn">📥 ファイルから読み込み</button>
+    </div>
+    <input type="file" id="importFile" accept=".json,application/json" hidden>
+    <div class="count">ファイル（.json）なら、別のPCや他の人とも共有できます。</div>
+  </section>
+  </div>
+
+  <section class="card">
+    <div class="toolbar">
+      <button id="editBtn">✏️ 組み合わせ編集</button>
+      <button id="resetBtn">↺ 結果をリセット</button>
+      <label class="layoutSel">表示形式
+        <select id="layout">
+          <option value="one">片側（左→右）</option>
+          <option value="split">左右分割（中央が優勝）</option>
+        </select>
+      </label>
+      <span class="spacer"></span>
+      <div class="zoom">
+        <button id="zoomOut" title="縮小">－</button>
+        <input type="range" id="zoom" min="20" max="200" step="5" value="100" aria-label="表示サイズ">
+        <button id="zoomIn" title="拡大">＋</button>
+        <span id="zoomVal">100%</span>
+        <button id="zoomFit">画面に合わせる</button>
+      </div>
+      <button id="pngBtn">⬇ 画像(PNG)で保存</button>
+    </div>
+    <p class="hint" id="hint"></p>
+    <div id="bracketWrap"><div class="empty">左側で参加者を入力して「トーナメント表を作成」を押してください</div></div>
+    <div class="legend">
+      <span style="--c:#e0393e;--f:#fff1f1">勝ち</span>
+      <span style="--c:#d1d5db;--f:#eef0f3">負け</span>
+      <span style="--c:#d4a017;--f:#fff7d6">優勝</span>
+      <span style="--c:#b87333;--f:#fbeee2">3位</span>
+    </div>
+  </section>
+</main>
+
+<div class="modal" id="rModal" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="rTitle">
+    <h3 id="rTitle">🎰 ルーレット抽選</h3>
+    <div class="rTarget" id="rTarget"></div>
+    <div class="wheelWrap"><div class="pointer"></div><div class="disc"><canvas id="wheel" width="680" height="680"></canvas></div></div>
+    <div class="rCurrent" id="rCurrent">&nbsp;</div>
+    <div class="rBtns">
+      <button class="primary" id="rSpin">スタート</button>
+      <button id="rRest">残りを自動で配置</button>
+      <button id="rClose">閉じる</button>
+    </div>
+    <ul class="rLog" id="rLog"></ul>
+  </div>
+</div>
+
+<script>
+const KEY = 'tournament-maker-v1';
+const C = {
+  line:'#9ca3af', win:'#e0393e', winFill:'#fff1f1', loseFill:'#eef0f3', loseStroke:'#d1d5db',
+  loseText:'#9ca3af', text:'#1f2328', bye:'#c4c9d1', champ:'#d4a017', champFill:'#fff7d6', sel:'#2563eb',
+  bronze:'#b87333', bronzeFill:'#fbeee2'
+};
+const BOX_W = 170, BOX_H = 30, COL_GAP = 48, UNIT = 42, TOP = 76, LEFT = 20;
+const FONT = '"Hiragino Sans","Meiryo","Yu Gothic UI",sans-serif';
+
+let state = load();
+let editMode = false;
+let selected = null; // round-1 slot index selected in edit mode
+let lastDrawn = null; // ルーレットで直前に決まった枠（強調表示用）
+
+const $ = id => document.getElementById(id);
+
+// ---------- persistence ----------
+function load(){ try { return JSON.parse(localStorage.getItem(KEY)); } catch(e){ return null; } }
+function save(){ try { localStorage.setItem(KEY, JSON.stringify(state)); } catch(e){} }
+
+// ---------- generation ----------
+function seedOrder(n){
+  let o = [1];
+  while (o.length < n){ const m = o.length * 2 + 1; o = o.flatMap(s => [s, m - s]); }
+  return o;
+}
+function parseNames(){ return $('names').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean); }
+
+function shuffled(a){
+  a = a.slice();
+  for (let i = a.length - 1; i > 0; i--){ const k = Math.floor(Math.random() * (i + 1)); [a[i], a[k]] = [a[k], a[i]]; }
+  return a;
+}
+// roulette = true のときは枠を空（''＝抽選待ち）にして、ルーレットで1人ずつ埋めていく
+function generate(roulette){
+  let names = parseNames();
+  if (names.length < 2){ alert('参加者を2人以上入力してください'); return false; }
+  if (names.length > 256){ alert('参加者は256人までです'); return false; }
+  if (state && state.slots && Object.keys(state.winners||{}).length && !confirm('現在のトーナメント表と結果を破棄して作り直しますか？')) return false;
+  if (!roulette && $('shuffle').checked) names = shuffled(names);
+  const rounds = Math.ceil(Math.log2(names.length));
+  const size = 2 ** rounds;
+  const slots = seedOrder(size).map(s => s <= names.length ? (roulette ? '' : names[s - 1]) : null);
+  state = { title: $('title').value.trim(), names: $('names').value, size, rounds, slots, winners: {}, third: $('third').checked, layout: $('layout').value, zoom: state && state.zoom || 1 };
+  if (roulette) state.drawRemaining = names.slice();
+  editMode = false; selected = null;
+  save(); render();
+  return true;
+}
+// 抽選途中で終わった場合：残りをランダムに空き枠へ
+function fillRemainingRandomly(){
+  if (!state || !state.drawRemaining) return;
+  const rest = shuffled(state.drawRemaining);
+  state.slots.forEach((s, j) => { if (s === '' && rest.length) state.slots[j] = rest.shift(); });
+  delete state.drawRemaining;
+}
+
+// ---------- bracket logic ----------
+// position (r, j): r = column (0 = 1回戦), j = index in column
+function pos(r, j){
+  if (r === 0) return state.slots[j] == null ? {t:'bye'} : state.slots[j] === '' ? {t:'tbd'} : {t:'p', name: state.slots[j]};
+  return matchWinner(r - 1, j);
+}
+function matchWinner(r, m){
+  const a = pos(r, 2*m), b = pos(r, 2*m + 1);
+  if (a.t === 'bye' && b.t === 'bye') return {t:'bye'};
+  if (a.t === 'bye') return b;
+  if (b.t === 'bye') return a;
+  if (a.t !== 'p' || b.t !== 'p') return {t:'tbd'};
+  const w = state.winners[r + '-' + m];
+  return w === 0 ? a : w === 1 ? b : {t:'tbd'};
+}
+// explicit result of match: 0 / 1 / null (only when both players are real)
+function decided(r, m){
+  const a = pos(r, 2*m), b = pos(r, 2*m + 1);
+  if (a.t !== 'p' || b.t !== 'p') return null;
+  const w = state.winners[r + '-' + m];
+  return (w === 0 || w === 1) ? w : null;
+}
+function clearFrom(r, m){
+  delete state.winners[r + '-' + m];
+  clearDownstream(r, m);
+}
+function clearDownstream(r, m){
+  // 準決勝以前の結果が変わると準決勝の敗者も変わり得るので3位決定戦も消す
+  if (r <= state.rounds - 2) delete state.winners['3rd'];
+  for (let k = r + 1; k < state.rounds; k++){ m = Math.floor(m / 2); delete state.winners[k + '-' + m]; }
+}
+
+// ---------- 3位決定戦 ----------
+const hasThird = () => !!(state && state.third && state.rounds >= 2);
+function semiLoser(m){
+  const r = state.rounds - 2;
+  const a = pos(r, 2*m), b = pos(r, 2*m + 1);
+  if (a.t === 'bye' || b.t === 'bye') return {t:'bye'}; // 不戦勝の準決勝には敗者がいない
+  const d = decided(r, m);
+  return d === null ? {t:'tbd'} : (d === 0 ? b : a);
+}
+function thirdDecided(){
+  const a = semiLoser(0), b = semiLoser(1);
+  if (a.t !== 'p' || b.t !== 'p') return null;
+  const w = state.winners['3rd'];
+  return (w === 0 || w === 1) ? w : null;
+}
+function thirdWinner(){
+  const a = semiLoser(0), b = semiLoser(1);
+  if (a.t === 'bye' && b.t === 'bye') return {t:'bye'};
+  if (a.t === 'bye') return b;
+  if (b.t === 'bye') return a;
+  const d = thirdDecided();
+  return d === 0 ? a : d === 1 ? b : {t:'tbd'};
+}
+
+function roundLabel(r){
+  const rem = state.rounds - r;
+  if (rem === 0) return '優勝';
+  if (rem === 1) return '決勝';
+  if (rem === 2) return '準決勝';
+  if (rem === 3 && state.rounds >= 4) return '準々決勝';
+  return (r + 1) + '回戦';
+}
+
+// ---------- rendering ----------
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function fit(s, maxW){
+  let w = 0, out = '';
+  for (const ch of s){
+    const cw = /[\u0000-ÿ｡-ﾟ]/.test(ch) ? 7.6 : 13.5;
+    if (w + cw > maxW){ return out + '…'; }
+    w += cw; out += ch;
+  }
+  return out;
+}
+const STEP = BOX_W + COL_GAP;
+const yOf = (r, j) => TOP + UNIT * (j * 2**r + 2**r / 2);
+const isSplit = () => state.layout === 'split';
+
+// 各枠の位置 {x: 左端, y: 中心, side: 'L'(右へ勝ち上がる) | 'R'(左へ勝ち上がる) | 'C'(中央)}
+function geo(r, j){
+  const R = state.rounds;
+  if (!isSplit()) return { x: LEFT + r * STEP, y: yOf(r, j), side: 'L' };
+  const xc = LEFT + R * STEP;
+  if (r === R) return { x: xc, y: TOP + UNIT * state.size / 4, side: 'C' };
+  const half = state.size / 2**r / 2;
+  if (j < half) return { x: LEFT + r * STEP, y: yOf(r, j), side: 'L' };
+  return { x: xc + STEP + (R - 1 - r) * STEP, y: yOf(r, j - half), side: 'R' };
+}
+// 子の枠 c から親の枠 p への線
+function link(c, p){
+  if (c.side === 'R'){ const mid = c.x - COL_GAP / 2; return `M${c.x} ${c.y}H${mid}V${p.y}H${p.x + BOX_W}`; }
+  const mid = c.x + BOX_W + COL_GAP / 2;
+  return `M${c.x + BOX_W} ${c.y}H${mid}V${p.y}H${p.x}`;
+}
+
+function buildSVG(forExport){
+  const R = state.rounds, split = isSplit();
+  const mainH = (split ? state.size / 2 : state.size) * UNIT;
+  const thirdH = hasThird() ? (split ? 24 + 14 + UNIT + 10 : 24 + 14 + UNIT * 2 + 10) : 0;
+  const W = split ? LEFT * 2 + (2*R + 1) * BOX_W + 2*R * COL_GAP : LEFT * 2 + (R + 1) * BOX_W + R * COL_GAP;
+  const H = TOP + mainH + 16 + thirdH;
+  const parts = [];
+  const label = (x, y, text, extra = '') =>
+    parts.push(`<text x="${x + BOX_W/2}" y="${y}" font-size="13" font-weight="600" fill="#6b7280" text-anchor="middle"${extra}>${text}</text>`);
+
+  parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family='${FONT}'>`);
+  parts.push(`<rect width="${W}" height="${H}" fill="#ffffff"/>`);
+  parts.push(`<text x="${split ? W/2 : LEFT}" y="32" font-size="20" font-weight="700" fill="${C.text}"${split ? ' text-anchor="middle"' : ''}>${esc(state.title || 'トーナメント表')}</text>`);
+
+  // 回戦名
+  if (split){
+    for (let r = 0; r < R; r++){
+      const half = state.size / 2**r / 2;
+      label(geo(r, 0).x, TOP - 14, roundLabel(r));
+      label(geo(r, half).x, TOP - 14, roundLabel(r));
+    }
+    const c = geo(R, 0);
+    parts.push(`<text x="${c.x + BOX_W/2}" y="${c.y - BOX_H/2 - 12}" font-size="22" font-weight="800" fill="${C.champ}" text-anchor="middle">優勝</text>`);
+  } else {
+    for (let r = 0; r <= R; r++) label(geo(r, 0).x, TOP - 14, roundLabel(r));
+  }
+
+  // 線（通常の線の上に勝ち上がりの線を重ねる）
+  const normal = [], winning = [];
+  for (let r = 0; r < R; r++){
+    const n = state.size / 2**(r + 1);
+    for (let m = 0; m < n; m++){
+      const p = geo(r + 1, m);
+      const pa = link(geo(r, 2*m), p), pb = link(geo(r, 2*m + 1), p);
+      const d = decided(r, m);
+      normal.push(pa, pb);
+      if (d === 0) winning.push(pa);
+      if (d === 1) winning.push(pb);
+    }
+  }
+  parts.push(`<path d="${normal.join('')}" fill="none" stroke="${C.line}" stroke-width="1.5"/>`);
+  if (winning.length) parts.push(`<path d="${winning.join('')}" fill="none" stroke="${C.win}" stroke-width="3.5" stroke-linejoin="round"/>`);
+
+  // box: kind = 'none' | 'win' | 'lose' | 'champ' | 'bronze'
+  function box(p, x, yc, kind, o){
+    const y = yc - BOX_H/2;
+    let fill = '#fff', stroke = C.line, sw = 1.2, tcol = C.text, weight = 400, dash = '', label = '', opacity = 1;
+    if (p.t === 'bye'){ stroke = C.bye; dash = '4 3'; tcol = C.bye; label = o.byeLabel || ''; if (!o.byeLabel) opacity = 0.35; }
+    else if (p.t === 'tbd'){ fill = '#fafafa'; stroke = '#e5e7eb'; label = o.tbdLabel || ''; tcol = C.loseText; }
+    else {
+      label = p.name;
+      if (kind === 'champ'){ fill = C.champFill; stroke = C.champ; sw = 2.5; weight = 700; label = '👑 ' + p.name; }
+      else if (kind === 'bronze'){ fill = C.bronzeFill; stroke = C.bronze; sw = 2.5; weight = 700; label = '🥉 ' + p.name; }
+      else if (kind === 'win'){ fill = C.winFill; stroke = C.win; sw = 2.5; weight = 700; }
+      else if (kind === 'lose'){ fill = C.loseFill; stroke = C.loseStroke; tcol = C.loseText; }
+    }
+    if (o.selected){ stroke = C.sel; sw = 2.5; dash = '5 3'; }
+    if (o.flash){ fill = '#fff7d6'; stroke = '#f59e0b'; sw = 3; weight = 700; }
+    parts.push(`<g${o.data ? ` class="slot" ${o.data}` : ''} opacity="${opacity}">`);
+    parts.push(`<rect x="${x}" y="${y}" width="${BOX_W}" height="${BOX_H}" rx="5" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`);
+    if (label) parts.push(`<text x="${x + 10}" y="${yc}" dy="0.35em" font-size="14" font-weight="${weight}" fill="${tcol}"${kind === 'lose' && p.t === 'p' ? ' text-decoration="line-through"' : ''}>${esc(fit(label, BOX_W - 20))}</text>`);
+    parts.push(`</g>`);
+  }
+
+  for (let r = 0; r <= R; r++){
+    const n = state.size / 2**r;
+    for (let j = 0; j < n; j++){
+      const p = pos(r, j), g = geo(r, j);
+      let kind = 'none';
+      if (r === R) kind = 'champ';
+      else { const d = decided(r, Math.floor(j/2)); if (d !== null) kind = d === j % 2 ? 'win' : 'lose'; }
+      const clickable = !forExport && ((editMode && r === 0) || (!editMode && r < R && p.t === 'p'));
+      box(p, g.x, g.y, kind, {
+        data: clickable ? `data-r="${r}" data-j="${j}"` : '',
+        selected: !forExport && editMode && r === 0 && selected === j,
+        byeLabel: r === 0 ? 'BYE（不戦）' : '',
+        tbdLabel: r === 0 ? '？ 抽選待ち' : '',
+        flash: !forExport && r === 0 && lastDrawn === j
+      });
+    }
+  }
+
+  // 3位決定戦
+  if (hasThird()){
+    const top = TOP + mainH + 24;
+    let tA, tB, tW;
+    if (split){
+      const y3 = top + 14 + UNIT/2, xc = LEFT + R * STEP;
+      tA = { x: LEFT + (R - 1) * STEP, y: y3, side: 'L' };
+      tB = { x: xc + STEP, y: y3, side: 'R' };
+      tW = { x: xc, y: y3, side: 'C' };
+      label(tA.x, top, '3位決定戦'); label(tB.x, top, '3位決定戦'); label(tW.x, top, '3位');
+    } else {
+      const xm = LEFT + (R - 1) * STEP, ya = top + 14 + UNIT/2, yb = ya + UNIT;
+      tA = { x: xm, y: ya, side: 'L' };
+      tB = { x: xm, y: yb, side: 'L' };
+      tW = { x: LEFT + R * STEP, y: (ya + yb) / 2, side: 'C' };
+      label(tA.x, top, '3位決定戦'); label(tW.x, top, '3位');
+    }
+    parts.push(`<line x1="${LEFT}" y1="${top - 22}" x2="${W - LEFT}" y2="${top - 22}" stroke="#e5e7eb" stroke-dasharray="6 4"/>`);
+    const pa = link(tA, tW), pb = link(tB, tW);
+    parts.push(`<path d="${pa + pb}" fill="none" stroke="${C.line}" stroke-width="1.5"/>`);
+    const d = thirdDecided();
+    if (d !== null) parts.push(`<path d="${d === 0 ? pa : pb}" fill="none" stroke="${C.win}" stroke-width="3.5" stroke-linejoin="round"/>`);
+    [semiLoser(0), semiLoser(1)].forEach((p, i) => {
+      const clickable = !forExport && !editMode && p.t === 'p';
+      const t = i ? tB : tA;
+      box(p, t.x, t.y, d === null ? 'none' : d === i ? 'win' : 'lose', {
+        data: clickable ? `data-r="3rd" data-j="${i}"` : '', byeLabel: ''
+      });
+    });
+    box(thirdWinner(), tW.x, tW.y, 'bronze', {});
+  }
+  parts.push('</svg>');
+  return parts.join('');
+}
+
+function render(){
+  const wrap = $('bracketWrap');
+  $('editBtn').classList.toggle('on', editMode);
+  $('editBtn').textContent = editMode ? '✔ 編集を終了' : '✏️ 組み合わせ編集';
+  const hint = $('hint');
+  hint.classList.toggle('edit', editMode);
+  hint.textContent = editMode
+    ? '編集モード：1回戦の枠を2つ順にクリックすると入れ替わります。ダブルクリックで名前を変更（空欄にするとBYE）。'
+    : '勝った人の枠をクリックすると勝ち上がります（もう一度クリックで取り消し）。';
+  if (!state || !state.slots){ wrap.innerHTML = '<div class="empty">左側で参加者を入力して「トーナメント表を作成」を押してください</div>'; return; }
+  wrap.innerHTML = buildSVG(false);
+  applyZoom();
+}
+
+// ---------- interaction ----------
+$('bracketWrap').addEventListener('click', e => {
+  const g = e.target.closest('[data-r]');
+  if (!g || !state) return;
+  if (g.dataset.r === '3rd'){
+    if (editMode) return;
+    const side = +g.dataset.j;
+    if ([semiLoser(0), semiLoser(1)].some(p => p.t !== 'p')) return;
+    if (state.winners['3rd'] === side) delete state.winners['3rd'];
+    else state.winners['3rd'] = side;
+    save(); render(); return;
+  }
+  const r = +g.dataset.r, j = +g.dataset.j;
+  if (editMode){
+    if (r !== 0) return;
+    if (selected === null){ selected = j; }
+    else if (selected === j){ selected = null; }
+    else {
+      const s = state.slots;
+      [s[selected], s[j]] = [s[j], s[selected]];
+      clearFrom(0, Math.floor(selected/2)); clearFrom(0, Math.floor(j/2));
+      selected = null; save();
+    }
+    render(); return;
+  }
+  const m = Math.floor(j/2), side = j % 2;
+  const other = pos(r, j ^ 1);
+  if (other.t !== 'p') return; // 相手未定 or 不戦勝
+  const key = r + '-' + m;
+  if (state.winners[key] === side) delete state.winners[key];
+  else state.winners[key] = side;
+  clearDownstream(r, m);
+  save(); render();
+});
+
+$('bracketWrap').addEventListener('dblclick', e => {
+  const g = e.target.closest('[data-r]');
+  if (!g || !state || !editMode || +g.dataset.r !== 0) return;
+  const j = +g.dataset.j;
+  const cur = state.slots[j] ?? '';
+  const v = prompt('名前を入力してください（空欄でBYE）', cur);
+  if (v === null) return;
+  const nv = v.trim() || null;
+  if ((nv === null) !== (state.slots[j] === null)) clearFrom(0, Math.floor(j/2));
+  state.slots[j] = nv;
+  selected = null; save(); render();
+});
+
+$('editBtn').onclick = () => { if (!state) return; editMode = !editMode; selected = null; render(); };
+$('resetBtn').onclick = () => {
+  if (!state || !confirm('勝敗の結果をすべてリセットしますか？（組み合わせはそのまま）')) return;
+  state.winners = {}; save(); render();
+};
+$('generate').onclick = () => generate(false);
+$('title').addEventListener('input', () => { if (state){ state.title = $('title').value.trim(); save(); render(); } });
+$('layout').addEventListener('change', () => { if (state){ state.layout = $('layout').value; save(); render(); } });
+$('third').addEventListener('change',() => { if (state){ state.third = $('third').checked; save(); render(); } });
+$('names').addEventListener('input',() => { $('count').textContent = parseNames().length + ' 人'; });
+
+$('pngBtn').onclick = () => {
+  if (!state || !state.slots){ alert('先にトーナメント表を作成してください'); return; }
+  const svg = buildSVG(true);
+  const w = +svg.match(/width="(\d+(?:\.\d+)?)"/)[1], h = +svg.match(/height="(\d+(?:\.\d+)?)"/)[1];
+  const img = new Image();
+  img.onload = () => {
+    // 画像も表示サイズに合わせる（くっきり保存するため2倍で描画、ブラウザの上限を超えないよう制限）
+    const scale = Math.min(2 * getZoom(), 16000 / Math.max(w, h));
+    const cv = document.createElement('canvas');
+    cv.width = w * scale; cv.height = h * scale;
+    const ctx = cv.getContext('2d');
+    ctx.scale(scale, scale);
+    ctx.drawImage(img, 0, 0);
+    cv.toBlob(blob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (state.title || 'tournament').replace(/[\\/:*?"<>|]/g, '_') + '.png';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }, 'image/png');
+  };
+  img.onerror = () => alert('画像の生成に失敗しました');
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+};
+
+// ---------- zoom ----------
+const ZMIN = 0.2, ZMAX = 2;
+const clampZ = z => Math.min(ZMAX, Math.max(ZMIN, Math.round(z * 100) / 100));
+const getZoom = () => (state && state.zoom) || 1;
+function applyZoom(){
+  const z = getZoom();
+  $('zoom').value = Math.round(z * 100);
+  $('zoomVal').textContent = Math.round(z * 100) + '%';
+  const svg = $('bracketWrap').querySelector('svg');
+  if (svg){
+    svg.style.width = (+svg.getAttribute('width') * z) + 'px';
+    svg.style.height = (+svg.getAttribute('height') * z) + 'px';
+  }
+}
+function setZoom(z){
+  if (!state || !state.slots) return;
+  state.zoom = clampZ(z); save(); applyZoom();
+}
+$('zoom').addEventListener('input', e => setZoom(e.target.value / 100));
+$('zoomIn').onclick = () => setZoom(getZoom() + 0.1);
+$('zoomOut').onclick = () => setZoom(getZoom() - 0.1);
+$('zoomFit').onclick = () => {
+  const svg = $('bracketWrap').querySelector('svg'); if (!svg) return;
+  const wrap = $('bracketWrap');
+  const fitW = (wrap.clientWidth - 4) / +svg.getAttribute('width');
+  const fitH = (window.innerHeight - wrap.getBoundingClientRect().top - 60) / +svg.getAttribute('height');
+  setZoom(Math.floor(Math.min(fitW, Math.max(fitH, 0.2), 1) * 100) / 100);
+};
+// Ctrl + マウスホイールでも拡大縮小
+$('bracketWrap').addEventListener('wheel', e => {
+  if (!e.ctrlKey || !state || !state.slots) return;
+  e.preventDefault();
+  setZoom(getZoom() + (e.deltaY < 0 ? 0.1 : -0.1));
+}, { passive: false });
+
+// ---------- save / load ----------
+const LIB_KEY = 'tournament-maker-library-v1';
+function loadLib(){ try { return JSON.parse(localStorage.getItem(LIB_KEY)) || []; } catch(e){ return []; } }
+function saveLib(lib){
+  try { localStorage.setItem(LIB_KEY, JSON.stringify(lib)); return true; }
+  catch(e){ alert('ブラウザに保存できませんでした。「ファイルに書き出し」をお使いください。'); return false; }
+}
+function isValid(d){
+  return d && Array.isArray(d.slots) && Number.isInteger(d.rounds) && d.slots.length === 2 ** d.rounds && d.size === d.slots.length;
+}
+function applyLoaded(d){
+  state = { title: d.title || '', names: d.names || '', size: d.size, rounds: d.rounds,
+            slots: d.slots.map(s => s == null ? null : String(s)), winners: d.winners || {}, third: !!d.third, layout: d.layout === 'split' ? 'split' : 'one', zoom: clampZ(+d.zoom || 1) };
+  $('title').value = state.title; $('names').value = state.names; $('third').checked = state.third; $('layout').value = state.layout;
+  $('count').textContent = parseNames().length + ' 人';
+  editMode = false; selected = null;
+  save(); render();
+}
+function confirmReplace(){
+  return !state || !state.slots || confirm('表示中のトーナメント表を閉じて読み込みますか？（保存していない変更は失われます）');
+}
+const fmtDate = t => { const d = new Date(t); return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
+
+function renderLib(){
+  const lib = loadLib().filter(e => e && e.data && isValid(e.data));
+  $('lib').innerHTML = lib.length
+    ? lib.map(e => `<li><div class="meta"><div class="name" title="${esc(e.name)}">${esc(e.name)}</div><div class="date">${fmtDate(e.savedAt)}・${e.data.slots.filter(s => s != null).length}人</div></div>
+        <button data-open="${e.id}">開く</button><button data-del="${e.id}">削除</button></li>`).join('')
+    : '<li class="none">保存したトーナメントはまだありません</li>';
+}
+
+$('saveBtn').onclick = () => {
+  if (!state || !state.slots){ alert('先にトーナメント表を作成してください'); return; }
+  const name = prompt('保存名を入力してください', state.title || 'トーナメント');
+  if (name === null) return;
+  const n = name.trim() || 'トーナメント';
+  const lib = loadLib();
+  const dup = lib.find(e => e.name === n);
+  if (dup && !confirm(`「${n}」は既に保存されています。上書きしますか？`)) return;
+  const entry = { id: dup ? dup.id : Date.now().toString(36), name: n, savedAt: Date.now(), data: JSON.parse(JSON.stringify(state)) };
+  const next = [entry, ...lib.filter(e => e !== dup)];
+  if (saveLib(next)){ renderLib(); alert(`「${n}」を保存しました`); }
+};
+
+$('lib').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const lib = loadLib();
+  if (b.dataset.open){
+    const entry = lib.find(x => x.id === b.dataset.open);
+    if (!entry || !isValid(entry.data)){ alert('データを読み込めませんでした'); return; }
+    if (confirmReplace()) applyLoaded(entry.data);
+  } else if (b.dataset.del){
+    const entry = lib.find(x => x.id === b.dataset.del);
+    if (entry && confirm(`「${entry.name}」を削除しますか？（元に戻せません）`)){ saveLib(lib.filter(x => x !== entry)); renderLib(); }
+  }
+});
+
+$('exportBtn').onclick = () => {
+  if (!state || !state.slots){ alert('先にトーナメント表を作成してください'); return; }
+  const blob = new Blob([JSON.stringify({ app: 'tournament-maker', version: 1, data: state }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (state.title || 'tournament').replace(/[\\/:*?"<>|]/g, '_') + '.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$('importBtn').onclick = () => $('importFile').click();
+$('importFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    const j = JSON.parse(await f.text());
+    const d = j && j.data ? j.data : j;
+    if (!isValid(d)) throw new Error('invalid');
+    if (confirmReplace()) applyLoaded(d);
+  } catch(err){ alert('このファイルは読み込めません（トーナメントメーカーで書き出したJSONファイルを選んでください）'); }
+});
+
+// ---------- roulette ----------
+const WHEEL_COLORS = ['#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316'];
+let wheelAngle = 0, spinning = false, drawDone = false;
+
+const nextTarget = () => state.slots.indexOf('');
+const slotLabel = j => `1回戦 第${Math.floor(j/2) + 1}試合（上から${j + 1}番目の枠）`;
+
+function drawWheel(){
+  const names = state.drawRemaining || [];
+  const cv = $('wheel'), ctx = cv.getContext('2d'), S = cv.width, c = S / 2, rad = c - 6;
+  ctx.clearRect(0, 0, S, S);
+  const n = names.length;
+  if (!n) return;
+  const seg = 2 * Math.PI / n;
+  ctx.save(); ctx.translate(c, c);
+  for (let i = 0; i < n; i++){
+    const a0 = -Math.PI / 2 + i * seg;
+    let ci = i % WHEEL_COLORS.length;
+    if (n > 1 && i === n - 1 && ci === 0) ci = 1; // 最初と最後が同じ色にならないように
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, rad, a0, a0 + seg); ctx.closePath();
+    ctx.fillStyle = WHEEL_COLORS[ci]; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+    if (n <= 40){
+      const fs = Math.max(13, Math.min(30, seg * rad * 0.5));
+      ctx.save(); ctx.rotate(a0 + seg / 2);
+      ctx.fillStyle = '#fff'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      ctx.font = `bold ${fs}px ${FONT}`;
+      ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 3;
+      ctx.fillText(fit(names[i], (rad - 70) * 14 / fs), rad - 18, 0);
+      ctx.restore();
+    }
+  }
+  ctx.beginPath(); ctx.arc(0, 0, 42, 0, 2 * Math.PI);
+  ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 5; ctx.strokeStyle = '#1f2937'; ctx.stroke();
+  ctx.restore();
+  cv.style.transform = `rotate(${wheelAngle}deg)`;
+}
+
+function setRouletteUI(){
+  const rest = state && state.drawRemaining ? state.drawRemaining.length : 0;
+  $('rSpin').hidden = $('rRest').hidden = drawDone;
+  $('rSpin').disabled = $('rRest').disabled = $('rClose').disabled = spinning;
+  $('rSpin').textContent = $('rLog').children.length ? '次を抽選 ▶' : 'スタート';
+  $('rClose').textContent = drawDone ? 'トーナメント表を見る' : '閉じる';
+  if (drawDone) $('rTarget').textContent = '抽選完了！全チームの配置が決まりました';
+  else if (!spinning) $('rTarget').textContent = `${slotLabel(nextTarget())} に入るのは…？（残り${rest}チーム）`;
+}
+function addLog(text){
+  const li = document.createElement('li'); li.textContent = text;
+  $('rLog').prepend(li);
+}
+function completeDraw(){
+  delete state.drawRemaining;
+  drawDone = true;
+}
+
+function spin(){
+  const names = state.drawRemaining;
+  if (spinning || !names || !names.length) return;
+  drawWheel();
+  const n = names.length, segDeg = 360 / n;
+  const k = Math.floor(Math.random() * n);                 // 当選するチーム
+  const dur = 5000 + Math.random() * 2000;                 // 5〜7秒
+  const jitter = (Math.random() - 0.5) * 0.7;              // 枠の中央からのずれ（毎回止まる位置を変える）
+  const start = wheelAngle;
+  const targetMod = ((360 - (k + 0.5 + jitter) * segDeg) % 360 + 360) % 360;
+  const delta = ((targetMod - ((start % 360) + 360) % 360) + 360) % 360;
+  const total = 360 * (Math.round(dur / 1000) + 3) + delta; // 8〜10回転
+  spinning = true; setRouletteUI();
+  $('rCurrent').classList.remove('done');
+  const t0 = performance.now();
+  const frame = now => {
+    const t = Math.min(1, (now - t0) / dur);
+    const eased = 1 - Math.pow(1 - t, 4);                  // だんだんゆっくりになる
+    wheelAngle = start + total * eased;
+    $('wheel').style.transform = `rotate(${wheelAngle}deg)`;
+    const phi = ((-wheelAngle % 360) + 360) % 360;
+    $('rCurrent').textContent = names[Math.min(n - 1, Math.floor(phi / segDeg))];
+    if (t < 1) requestAnimationFrame(frame); else finishSpin(k);
+  };
+  requestAnimationFrame(frame);
+}
+function finishSpin(k){
+  const name = state.drawRemaining.splice(k, 1)[0];
+  const j = nextTarget();
+  state.slots[j] = name; lastDrawn = j;
+  addLog(`${slotLabel(j)} ← ${name}`);
+  const cur = $('rCurrent');
+  cur.textContent = '🎉 ' + name;
+  void cur.offsetWidth; cur.classList.add('done');
+  if (state.drawRemaining.length === 1){        // 最後の1チームは残りの枠へ
+    const last = state.drawRemaining[0], j2 = nextTarget();
+    state.slots[j2] = last;
+    addLog(`${slotLabel(j2)} ← ${last}（最後の1チーム）`);
+    state.drawRemaining = [];
+  }
+  if (!state.drawRemaining.length) completeDraw();
+  spinning = false;
+  save(); render(); setRouletteUI();
+}
+function placeRest(){
+  if (!state.drawRemaining) return;
+  const before = state.slots.slice();
+  fillRemainingRandomly();
+  state.slots.forEach((s, j) => { if (before[j] === '') addLog(`${slotLabel(j)} ← ${s}（自動）`); });
+  lastDrawn = null; drawDone = true;
+  $('rCurrent').textContent = ' ';
+  save(); render(); setRouletteUI();
+}
+
+$('rouletteBtn').onclick = () => {
+  if (!generate(true)) return;
+  lastDrawn = null; wheelAngle = 0; drawDone = false;
+  $('rLog').innerHTML = ''; $('rCurrent').textContent = ' '; $('rCurrent').classList.remove('done');
+  drawWheel(); setRouletteUI();
+  $('rModal').hidden = false;
+};
+$('rSpin').onclick = spin;
+$('rRest').onclick = () => { if (!spinning) placeRest(); };
+$('rClose').onclick = () => {
+  if (spinning) return;
+  if (state.drawRemaining && state.drawRemaining.length){
+    if (!confirm(`抽選を中断します。残りの${state.drawRemaining.length}チームはランダムに配置されます。よろしいですか？`)) return;
+    fillRemainingRandomly();
+  }
+  $('rModal').hidden = true;
+  lastDrawn = null; save(); render();
+};
+
+// ---------- init ----------
+renderLib();
+if (state && state.drawRemaining){ fillRemainingRandomly(); save(); } // 抽選途中でページを閉じた場合
+if (state){ $('title').value = state.title || ''; $('names').value = state.names || ''; $('third').checked = !!state.third; $('layout').value = state.layout === 'split' ? 'split' : 'one'; }
+$('count').textContent = parseNames().length + ' 人';
+render();
+</script>
+</body>
+</html>
