@@ -1,7 +1,7 @@
 // 大会オッズ - 画面
 import { firebaseConfig } from './firebase-config.js';
 import {
-  UNIT, calcOdds, buildView, computeSettlement, parseTeams, splitNames,
+  UNIT, calcOdds, buildView, computeSettlement, splitNames,
   rankLabel, memberStats, sortRecords, buildRecords,
 } from './common.js';
 
@@ -50,6 +50,7 @@ let SITE = { initialized: null, isSiteAdmin: false, siteKey: null };
 let MEMBERS = [];
 let MEMBER_BY_ID = {};
 let pageRefresh = () => {};   // サイト状態・名簿が変わったときに今のページを更新する関数
+let activePickers = [];       // 名簿の更新時に表示を更新するメンバー選択部品
 
 backend.watchSite(s => {
   SITE = s;
@@ -59,23 +60,81 @@ backend.watchSite(s => {
 backend.watchMembers(list => {
   MEMBERS = list.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
   MEMBER_BY_ID = Object.fromEntries(list.map(m => [m.id, m]));
+  activePickers.forEach(p => p.refresh());
   pageRefresh();
 }, e => console.error(e));
 
 const memberName = id => (MEMBER_BY_ID[id] || { name: '(削除されたメンバー)' }).name;
 
-// 名前の一覧をメンバー ID に変換。名簿にない名前は（サイト管理者なら）確認のうえ新規登録
-async function resolveMembers(names) {
+// ---------- メンバー選択部品 ----------
+// 名簿から検索して選ぶ。選択は {id}（登録済み）または {name}（新規登録予定）
+// opts.takenBy(): { memberId: '登録先チーム名' }（他チームに入っているメンバーは選べない）
+// opts.allowNew: 名簿にない名前を新規メンバーとして追加できるか
+function createPicker(el, { initial = [], takenBy = () => ({}), allowNew = false, onChange = () => {} } = {}) {
+  let items = initial.map(id => ({ id }));
+  el.classList.add('picker');
+  el.innerHTML = `
+    <div class="pkSel"></div>
+    <input type="text" class="pkIn" placeholder="名前で検索してメンバーを追加">
+    <div class="pkList" hidden></div>`;
+  const sel = $('.pkSel', el), inp = $('.pkIn', el), list = $('.pkList', el);
+  const label = it => it.id ? memberName(it.id) : it.name;
+  const has = it => items.some(x => (it.id && x.id === it.id) || (it.name && x.name === it.name));
+  const renderSel = () => {
+    sel.innerHTML = items.length ? items.map((it, i) => `
+      <span class="pkChip ${it.id ? '' : 'new'}">${esc(label(it))}${it.id ? '' : '<small>新規</small>'}
+        <button type="button" data-rm="${i}" aria-label="${esc(label(it))} を外す">×</button></span>`).join('')
+      : '<span class="hint">メンバー未選択</span>';
+    sel.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { items.splice(Number(b.dataset.rm), 1); renderSel(); onChange(); });
+  };
+  const add = it => { if (!has(it)) items.push(it); inp.value = ''; renderSel(); renderList(); onChange(); inp.focus(); };
+  const renderList = () => {
+    const q = inp.value.trim();
+    const taken = takenBy();
+    const cands = MEMBERS.filter(m => !items.some(x => x.id === m.id) && (!q || m.name.includes(q) || (m.note || '').includes(q)));
+    const exact = MEMBERS.some(m => m.name === q) || items.some(x => x.name === q);
+    let html = cands.slice(0, 50).map(m => taken[m.id]
+      ? `<div class="pkItem off">${esc(m.name)}<small>${esc(taken[m.id])} に登録済み</small></div>`
+      : `<button type="button" class="pkItem" data-id="${esc(m.id)}">${esc(m.name)}${m.note ? `<small>${esc(m.note)}</small>` : ''}</button>`).join('');
+    if (cands.length > 50) html += `<div class="pkItem off">ほか ${cands.length - 50} 名（名前で絞り込んでください）</div>`;
+    if (q && !exact && allowNew) html += `<button type="button" class="pkItem add" data-new="${esc(q)}">＋「${esc(q)}」を新しいメンバーとして追加</button>`;
+    if (!html) html = `<div class="pkItem off">${MEMBERS.length ? '該当するメンバーがいません' : 'メンバーが登録されていません'}</div>`;
+    list.innerHTML = html;
+    list.querySelectorAll('[data-id]').forEach(b => b.onclick = () => add({ id: b.dataset.id }));
+    list.querySelectorAll('[data-new]').forEach(b => b.onclick = () => add({ name: cleanName(b.dataset.new, 40) }));
+  };
+  // リスト内のクリックで入力欄のフォーカスが外れて閉じないようにする
+  list.addEventListener('mousedown', e => e.preventDefault());
+  inp.addEventListener('focus', () => { renderList(); list.hidden = false; });
+  inp.addEventListener('blur', () => { list.hidden = true; });
+  inp.addEventListener('input', () => { renderList(); list.hidden = false; });
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { inp.blur(); return; }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const first = list.querySelector('[data-id], [data-new]');
+    if (first) first.click();
+  });
+  renderSel();
+  return {
+    items: () => items.slice(),
+    ids: () => items.filter(x => x.id).map(x => x.id),
+    set(ids) { items = ids.map(id => ({ id })); renderSel(); },
+    refresh() { renderSel(); if (!list.hidden) renderList(); },
+  };
+}
+
+// 選択内容（新規メンバー含む）をメンバー ID に確定する。新規分はここで名簿に登録
+async function commitPickers(pickers) {
+  const newNames = [...new Set(pickers.flatMap(p => p.items().filter(x => !x.id).map(x => x.name)))];
   const byName = {};
   for (const m of MEMBERS) if (!(m.name in byName)) byName[m.name] = m.id;
-  const unknown = [...new Set(names.filter(n => !(n in byName)))];
-  if (unknown.length) {
-    if (!SITE.isSiteAdmin) throw new Error(`名簿にないメンバーがいます：${unknown.join('、')}（サイト管理者が名簿に登録してください）`);
-    if (!confirm(`名簿にない次の名前を、新しいメンバーとして登録します。\n\n${unknown.join('、')}\n\nよろしいですか？`)) return null;
-    const ids = await backend.createMembers(unknown);
-    unknown.forEach((n, i) => { byName[n] = ids[i]; });
+  const toCreate = newNames.filter(n => !(n in byName));
+  if (toCreate.length) {
+    const ids = await backend.createMembers(toCreate);
+    toCreate.forEach((n, i) => { byName[n] = ids[i]; });
   }
-  return names.map(n => byName[n]);
+  return pickers.map(p => [...new Set(p.items().map(x => x.id || byName[x.name]))]);
 }
 
 // ---------- モーダル ----------
@@ -90,7 +149,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal
 // ---------- ルーティング ----------
 let unwatch = () => {};
 function route() {
-  unwatch(); unwatch = () => {}; pageRefresh = () => {};
+  unwatch(); unwatch = () => {}; pageRefresh = () => {}; activePickers = [];
   closeModal();
   const h = location.hash;
   let m, nav = 'home';
@@ -138,9 +197,10 @@ function showHome() {
         <input type="text" id="cName" maxlength="60" placeholder="例：社内ボウリング大会 2026" required>
         <label for="cDate">開催日</label>
         <input type="date" id="cDate" value="${today()}">
-        <label for="cTeams">チームとメンバー（1 行に 1 チーム）</label>
-        <textarea id="cTeams" placeholder="チームA：山田、佐藤、鈴木&#10;チームB：田中、高橋&#10;チームC：伊藤、渡辺、中村"></textarea>
-        <p class="hint">「チーム名：メンバー、メンバー」の形式で入力します。名簿にない名前は新しいメンバーとして登録されます。</p>
+        <label>出場チームとメンバー</label>
+        <div id="teamRows"></div>
+        <button type="button" class="wide" id="addTeamRow" style="margin-top:8px">＋ チームを追加</button>
+        <p class="hint">メンバーは名簿から検索して選びます。名簿にない人は、検索欄に名前を入れて「新しいメンバーとして追加」を選ぶと、大会作成時に名簿にも登録されます。</p>
         <div class="row">
           <div><label for="cPoints">初期ポイント</label><input type="number" id="cPoints" value="1000" min="100" step="100"></div>
           <div><label for="cTake">控除率（%）</label><input type="number" id="cTake" value="0" min="0" max="50" step="1"></div>
@@ -149,10 +209,47 @@ function showHome() {
         <button class="primary wide" style="margin-top:12px">作成する</button>
         <div class="err" id="cErr"></div>
       </form>`;
+    // チーム行（チーム名＋メンバー選択）
+    const rows = [];
+    const takenFor = row => () => {
+      const out = {};
+      for (const r of rows) {
+        if (r === row) continue;
+        const label = r.nameEl.value.trim() || `チーム${rows.indexOf(r) + 1}`;
+        for (const id of r.picker.ids()) out[id] = label;
+      }
+      return out;
+    };
+    const renumber = () => rows.forEach((r, i) => { r.nameEl.placeholder = `チーム名（例：チーム${String.fromCharCode(65 + (i % 26))}）`; });
+    const addRow = () => {
+      const box = document.createElement('div');
+      box.className = 'teamRow';
+      box.innerHTML = `
+        <div class="row" style="margin-bottom:6px">
+          <input type="text" class="trName" maxlength="40">
+          <button type="button" class="small danger trDel" style="flex:0">削除</button>
+        </div>
+        <div class="trPick"></div>`;
+      $('#teamRows').appendChild(box);
+      const row = { box, nameEl: $('.trName', box) };
+      row.picker = createPicker($('.trPick', box), { takenBy: takenFor(row), allowNew: true });
+      $('.trDel', box).onclick = () => {
+        if (rows.length <= 2) return ($('#cErr').textContent = 'チームは 2 つ以上必要です');
+        rows.splice(rows.indexOf(row), 1); box.remove(); renumber();
+        activePickers = rows.map(r => r.picker);
+      };
+      rows.push(row); renumber();
+      activePickers = rows.map(r => r.picker);
+      return row;
+    };
+    addRow(); addRow();
+    $('#addTeamRow').onclick = () => { addRow().nameEl.focus(); };
+
     $('#createForm').onsubmit = async ev => {
       ev.preventDefault(); $('#cErr').textContent = '';
       const name = cleanName($('#cName').value, 60);
-      const teams = parseTeams($('#cTeams').value);
+      const teams = rows.map(r => ({ name: cleanName(r.nameEl.value, 40), picker: r.picker }));
+      if (teams.some(t => !t.name)) return ($('#cErr').textContent = 'チーム名を入力してください');
       const initialPoints = Math.floor(Number($('#cPoints').value));
       const takeout = Math.round(Number($('#cTake').value)) / 100;
       const fail = msg => { $('#cErr').textContent = msg; };
@@ -164,11 +261,8 @@ function showHome() {
       if (!(takeout >= 0 && takeout <= 0.5)) return fail('控除率は 0〜50% で指定してください');
       const btn = ev.submitter; if (btn) btn.disabled = true;
       try {
-        const allNames = teams.flatMap(t => t.members);
-        const ids = await resolveMembers(allNames);
-        if (!ids) { if (btn) btn.disabled = false; return; }
-        let i = 0;
-        const withIds = teams.map(t => ({ name: t.name, memberIds: t.members.map(() => ids[i++]) }));
+        const idLists = await commitPickers(teams.map(t => t.picker));
+        const withIds = teams.map((t, i) => ({ name: t.name, memberIds: idLists[i] }));
         const r = await backend.createTournament({ name, date: $('#cDate').value || '', teams: withIds, initialPoints, takeout });
         justCreated = r.id;
         location.hash = '#/t/' + r.id;
@@ -535,7 +629,7 @@ function renderAdmin() {
       <h3>チームの編集・追加</h3>
       <select id="teamSel"><option value="">＋ 新しいチームを追加</option>${opts}</select>
       <input type="text" id="teamName" maxlength="40" placeholder="チーム名" style="margin-top:6px">
-      <input type="text" id="teamMembers" placeholder="メンバー（「、」区切り）" style="margin-top:6px">
+      <div id="teamPick" style="margin-top:6px"></div>
       <button class="wide" id="teamSave" style="margin-top:6px">チームを追加</button>
       <button class="wide danger" id="admRemove" style="margin-top:6px" hidden>このチームを取消（投票は返還）</button>
       <h3>結果の確定（順位の入力）</h3>
@@ -565,11 +659,19 @@ function renderAdmin() {
 
   // チーム編集
   const teamSel = $('#teamSel');
+  let teamPicker = null;
   if (teamSel) {
+    // 他チームに入っているメンバーは選べない
+    teamPicker = createPicker($('#teamPick'), {
+      allowNew: SITE.isSiteAdmin,
+      takenBy: () => Object.fromEntries(RAW.t.entrants.filter(e => e.id !== teamSel.value)
+        .flatMap(e => (e.memberIds || []).map(id => [id, e.name]))),
+    });
+    activePickers = [teamPicker];
     teamSel.onchange = () => {
       const e = RAW.t.entrants.find(x => x.id === teamSel.value);
       $('#teamName').value = e ? e.name : '';
-      $('#teamMembers').value = e ? (e.memberIds || []).map(memberName).join('、') : '';
+      teamPicker.set(e ? (e.memberIds || []) : []);
       $('#teamSave').textContent = e ? 'チームを更新' : 'チームを追加';
       $('#admRemove').hidden = !e;
     };
@@ -580,8 +682,7 @@ function renderAdmin() {
     if (!name) return ($('#admErr').textContent = 'チーム名を入力してください');
     if (RAW.t.entrants.some(e => e.name === name && e.id !== id)) return ($('#admErr').textContent = '同名のチームがあります');
     run(async () => {
-      const memberIds = await resolveMembers(splitNames($('#teamMembers').value));
-      if (!memberIds) return;
+      const [memberIds] = await commitPickers([teamPicker]);
       if (id) await backend.updateEntrant(tid, RAW, id, { name, memberIds });
       else await backend.addEntrant(tid, RAW, { name, memberIds });
       toast(id ? 'チームを更新しました' : 'チームを追加しました');
