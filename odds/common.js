@@ -64,24 +64,26 @@ export function parseTeams(text) {
 }
 export const splitNames = text => [...new Set(String(text || '').split(/[,、，/／\n]/).map(s => s.trim().slice(0, 40)).filter(Boolean))];
 
-export const rankLabel = r => r === 1 ? '優勝' : r === 2 ? '準優勝' : r + '位';
+// 順位なし（初戦敗退など）は rank = null
+export const rankLabel = r => r == null ? '順位なし' : r === 1 ? '優勝' : r === 2 ? '準優勝' : r + '位';
 
-// メンバーの戦績集計
+// メンバーの戦績集計（出場回数は順位なしも含む。最高・平均は順位ありの戦績のみ）
 export function memberStats(records) {
   const n = records.length;
   const wins = records.filter(r => r.rank === 1).length;
-  const best = n ? Math.min(...records.map(r => r.rank)) : null;
-  const avg = n ? records.reduce((s, r) => s + r.rank, 0) / n : null;
+  const ranked = records.map(r => r.rank).filter(r => Number.isInteger(r));
+  const best = ranked.length ? Math.min(...ranked) : null;
+  const avg = ranked.length ? ranked.reduce((s, r) => s + r, 0) / ranked.length : null;
   return { count: n, wins, best, avg };
 }
 export const sortRecords = recs => [...recs].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0));
 
 // 確定時の戦績レコード（メンバー × 大会で 1 件、ID 固定で再実行しても重複しない）
+// 順位が空欄のチームも「順位なし（rank: null）」として出場記録を残す
 export function buildRecords(t, ranks) {
   const out = [];
   for (const e of t.entrants) {
-    const rank = ranks[e.id];
-    if (!rank) continue;
+    const rank = ranks[e.id] || null;
     for (const mid of e.memberIds || []) {
       out.push({
         id: `${t.id}_${mid}`, memberId: mid, tournamentId: t.id, tournamentName: t.name,

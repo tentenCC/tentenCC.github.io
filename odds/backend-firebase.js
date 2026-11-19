@@ -230,6 +230,20 @@ export function createFirebaseBackend(config) {
       catch (e) { throw new Error('サイト管理者キーが正しくありません'); }
     },
     async siteLogout() { await ready; await deleteDoc(doc(db, 'siteAdmins', uid)); },
+    // サイト管理者キーの再発行：新しいキーに差し替え、この端末以外のサイト管理者を外す
+    async resetSiteKey() {
+      await ready;
+      const key = randomHex(12);
+      const others = (await getDocs(collection(db, 'siteAdmins'))).docs.filter(d => d.id !== uid);
+      const groups = others.map(d => batch => batch.delete(d.ref));
+      // キーの差し替えは最後のバッチで（自分の管理者判定が先に消えないように）
+      groups.push(batch => {
+        batch.update(doc(db, 'site', 'admin'), { key });
+        batch.update(doc(db, 'siteAdmins', uid), { key });
+      });
+      await commitGroups(groups, groups.map((_, i) => i < others.length ? 1 : 2));
+      return key;
+    },
 
     // ---------- メンバー名簿 ----------
     watchMembers(cb, onErr) {

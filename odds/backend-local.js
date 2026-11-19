@@ -145,6 +145,11 @@ export function createLocalBackend() {
       d.siteAdmins[uid] = true;
     }),
     siteLogout: () => mutateRoot(d => { delete d.siteAdmins[uid]; }),
+    resetSiteKey: () => mutateRoot(d => {
+      requireSite(d);
+      d.site.key = randomHex(12);
+      d.siteAdmins = { [uid]: true };
+    }),
 
     // ---------- メンバー名簿 ----------
     watchMembers(cb) {

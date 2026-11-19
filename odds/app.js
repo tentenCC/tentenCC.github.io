@@ -642,7 +642,7 @@ function renderAdmin() {
       <label class="row" style="font-weight:400;gap:6px;flex-wrap:nowrap"><input type="checkbox" id="recOn" checked style="flex:0">
         <span>メンバーの戦績に記録する</span></label>
       <button class="primary wide" id="admSettle" style="margin-top:6px">順位を確定して払い戻す</button>
-      <p class="hint">1位のチームが優勝として払い戻しの対象になります。順位を空欄にしたチームは戦績に記録しません。確定すると取り消せません（受付中の場合は自動で締め切ります）。</p>`}
+      <p class="hint">1位のチームが優勝として払い戻しの対象になります。初戦敗退などで順位がつかないチームは空欄のままで構いません（戦績には「順位なし」の出場として記録されます）。確定すると取り消せません（受付中の場合は自動で締め切ります）。</p>`}
     <h3>大会の削除</h3>
     <button class="danger wide" id="admDel">この大会を削除する</button>
     <p class="hint">メンバーの戦績は削除されずに残ります。</p>
@@ -711,7 +711,7 @@ function renderAdmin() {
     const winnerId = firsts[0];
     const e = T.entrants.find(x => x.id === winnerId);
     const records = $('#recOn').checked ? buildRecords({ ...RAW.t, id: tid }, ranks) : [];
-    const lines = T.entrants.filter(x => ranks[x.id]).sort((a, b) => ranks[a.id] - ranks[b.id])
+    const lines = [...T.entrants].sort((a, b) => (ranks[a.id] || Infinity) - (ranks[b.id] || Infinity))
       .map(x => `${rankLabel(ranks[x.id])}：${x.name}`).join('\n');
     if (!confirm(`次の内容で確定します。取り消せません。\n\n${lines}\n\n${e.odds == null
       ? `優勝「${e.name}」には誰も投票していないため的中者なしとなり、全員の投票ポイントは返還されません。`
@@ -887,7 +887,7 @@ async function showMember(mid) {
         <label for="rDate">開催日</label><input type="date" id="rDate" value="${esc(r.date || '')}">
         <label for="rTeam">チーム名</label><input type="text" id="rTeam" maxlength="40" value="${esc(r.teamName || '')}">
         <div class="row">
-          <div><label for="rRank">順位</label><input type="number" id="rRank" min="1" max="999" value="${r.rank || ''}"></div>
+          <div><label for="rRank">順位（順位なしは空欄）</label><input type="number" id="rRank" min="1" max="999" placeholder="順位なし" value="${r.rank || ''}"></div>
           <div><label for="rCount">参加チーム数（任意）</label><input type="number" id="rCount" min="1" max="999" value="${r.teamCount || ''}"></div>
         </div>
         <button class="primary wide" id="rSave" style="margin-top:10px">${editing ? '更新する' : '追加する'}</button>
@@ -905,11 +905,11 @@ async function showMember(mid) {
     $('#rSave').onclick = async () => {
       $('#rErr').textContent = '';
       const tournamentName = cleanName($('#rName').value, 60);
-      const rank = Number($('#rRank').value);
+      const rank = $('#rRank').value === '' ? null : Number($('#rRank').value);
       const teamCount = $('#rCount').value === '' ? null : Number($('#rCount').value);
       if (!tournamentName) return ($('#rErr').textContent = '大会名を入力してください');
-      if (!Number.isInteger(rank) || rank < 1 || rank > 999) return ($('#rErr').textContent = '順位は 1 以上の整数で入力してください');
-      if (teamCount !== null && (!Number.isInteger(teamCount) || teamCount < rank || teamCount > 999))
+      if (rank !== null && (!Number.isInteger(rank) || rank < 1 || rank > 999)) return ($('#rErr').textContent = '順位は 1 以上の整数で入力してください（順位なしの場合は空欄）');
+      if (teamCount !== null && (!Number.isInteger(teamCount) || teamCount < (rank || 1) || teamCount > 999))
         return ($('#rErr').textContent = '参加チーム数は順位以上の整数で入力してください');
       try {
         await backend.saveRecord({
@@ -959,6 +959,8 @@ function showSiteAdmin() {
       <h3>サイト管理者キー</h3>
       <div class="keyBox">${esc(s.siteKey || '')}</div>
       <p class="hint">別の端末でサイト管理者になるには、その端末でこのキーを入力します。キーは大切に保管し、管理者以外に教えないでください。</p>
+      <button class="wide danger" id="siteReset" style="margin-top:12px">サイト管理者キーをリセット（再発行）</button>
+      <p class="hint">新しいキーを発行し、古いキーを無効にします。この端末以外のサイト管理者はすべてログアウトされます。</p>
       <button class="wide" id="siteLogout" style="margin-top:12px">この端末のサイト管理者権限を外す</button>`;
     else body = `
       <h2>サイト管理者ログイン</h2>
@@ -974,6 +976,10 @@ function showSiteAdmin() {
     };
     if ($('#siteLogin')) $('#siteLogin').onclick = async () => {
       try { await backend.siteLogin($('#siteKey').value.trim()); toast('サイト管理者としてログインしました'); } catch (e) { err(e); }
+    };
+    if ($('#siteReset')) $('#siteReset').onclick = async () => {
+      if (!confirm('サイト管理者キーをリセットします。\n古いキーは使えなくなり、この端末以外のサイト管理者はログアウトされます。よろしいですか？')) return;
+      try { await backend.resetSiteKey(); toast('新しいサイト管理者キーを発行しました。必ず控えてください'); } catch (e) { err(e); }
     };
     if ($('#siteLogout')) $('#siteLogout').onclick = async () => {
       if (!confirm('この端末のサイト管理者権限を外します。サイト管理者キーを控えていますか？')) return;
