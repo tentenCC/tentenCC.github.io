@@ -1,0 +1,127 @@
+rules_version = '2';
+// 大会オッズ用 Firestore セキュリティルール
+// Firebase コンソール → Firestore Database → ルール に貼り付けて「公開」してください。
+// サーバーを持たないため、ポイントの増減や投票の整合性はすべてこのルールで検証します。
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function tDoc(tid) { return /databases/$(database)/documents/tournaments/$(tid); }
+    function uDoc(tid, uid) { return /databases/$(database)/documents/tournaments/$(tid)/users/$(uid); }
+    function bDoc(tid, id) { return /databases/$(database)/documents/tournaments/$(tid)/bets/$(id); }
+    function aDoc(tid, uid) { return /databases/$(database)/documents/tournaments/$(tid)/admins/$(uid); }
+    function keyDoc(tid) { return /databases/$(database)/documents/tournaments/$(tid)/private/admin; }
+
+    function isAdmin(tid) { return signedIn() && exists(aDoc(tid, request.auth.uid)); }
+    function isOpen(tid) { return get(tDoc(tid)).data.status == 'open'; }
+    function validName(s, max) { return s is string && s.size() >= 1 && s.size() <= max; }
+    // 同じバッチで自分がオーナーの大会を新規作成しているか
+    function creatingOwnTournament(tid) {
+      return signedIn() && !exists(tDoc(tid)) && getAfter(tDoc(tid)).data.ownerUid == request.auth.uid;
+    }
+
+    // 参加者自身によるポイント変更は「投票の作成」または「投票の取消」と同時の場合だけ許可
+    function validBetChange(tid, uid) {
+      let n = request.resource.data;
+      let o = resource.data;
+      let b = bDoc(tid, n.lastBet);
+      return n.diff(o).affectedKeys().hasOnly(['points', 'lastBet'])
+        && isOpen(tid)
+        && n.points is int && n.points >= 0
+        && (
+          (!exists(b) && existsAfter(b) && getAfter(b).data.uid == uid
+            && n.points == o.points - getAfter(b).data.amount)
+          ||
+          (exists(b) && !existsAfter(b) && get(b).data.uid == uid
+            && n.points == o.points + get(b).data.amount)
+        );
+    }
+
+    match /tournaments/{tid} {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['name', 'status', 'takeout', 'initialPoints', 'ownerUid',
+             'entrants', 'entrantIds', 'winnerId', 'finalOdds', 'refunded', 'createdAt'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.status == 'open'
+        && validName(request.resource.data.name, 60)
+        && request.resource.data.initialPoints is int
+        && request.resource.data.initialPoints >= 100
+        && request.resource.data.initialPoints <= 10000000
+        && request.resource.data.takeout is number
+        && request.resource.data.takeout >= 0
+        && request.resource.data.takeout <= 0.5
+        && request.resource.data.entrantIds is list
+        && request.resource.data.entrantIds.size() >= 2
+        && request.resource.data.entrantIds.size() <= 200
+        && request.resource.data.winnerId == null
+        && existsAfter(aDoc(tid, request.auth.uid))
+        && existsAfter(keyDoc(tid));
+      allow update: if isAdmin(tid)
+        && resource.data.status != 'settled'
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['name', 'status', 'entrants', 'entrantIds', 'winnerId', 'finalOdds', 'refunded'])
+        && request.resource.data.status in ['open', 'closed', 'settled']
+        && (request.resource.data.status != 'settled' || resource.data.status == 'closed')
+        && request.resource.data.entrantIds.size() >= 2;
+      allow delete: if isAdmin(tid);
+
+      // 管理者キー（管理者のみ閲覧可）
+      match /private/{docId} {
+        allow read: if isAdmin(tid);
+        allow create: if docId == 'admin' && creatingOwnTournament(tid)
+          && request.resource.data.keys().hasOnly(['key'])
+          && request.resource.data.key is string
+          && request.resource.data.key.size() >= 16;
+        allow delete: if isAdmin(tid);
+      }
+
+      // 管理者として登録された端末（匿名ユーザー）
+      match /admins/{uid} {
+        allow read: if signedIn() && (request.auth.uid == uid || isAdmin(tid));
+        allow create: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['key'])
+          && ((exists(keyDoc(tid)) && request.resource.data.key == get(keyDoc(tid)).data.key)
+              || creatingOwnTournament(tid));
+        allow delete: if isAdmin(tid);
+      }
+
+      // 参加者
+      match /users/{uid} {
+        allow read: if true;
+        allow create: if signedIn() && request.auth.uid == uid
+          && get(tDoc(tid)).data.status != 'settled'
+          && request.resource.data.keys().hasOnly(['name', 'points', 'lastBet', 'joinedAt'])
+          && validName(request.resource.data.name, 30)
+          && request.resource.data.points == get(tDoc(tid)).data.initialPoints
+          && request.resource.data.lastBet == '';
+        allow update: if isAdmin(tid)
+          || (signedIn() && request.auth.uid == uid && validBetChange(tid, uid));
+        allow delete: if isAdmin(tid);
+      }
+
+      // 投票
+      match /bets/{betId} {
+        allow read: if true;
+        allow create: if signedIn()
+          && request.resource.data.keys().hasOnly(['uid', 'entrantId', 'amount', 'at'])
+          && request.resource.data.uid == request.auth.uid
+          && isOpen(tid)
+          && request.resource.data.entrantId in get(tDoc(tid)).data.entrantIds
+          && request.resource.data.amount is int
+          && request.resource.data.amount >= 100
+          && request.resource.data.amount % 100 == 0
+          && getAfter(uDoc(tid, request.auth.uid)).data.lastBet == betId
+          && getAfter(uDoc(tid, request.auth.uid)).data.points
+               == get(uDoc(tid, request.auth.uid)).data.points - request.resource.data.amount;
+        allow update: if isAdmin(tid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['payout']);
+        allow delete: if isAdmin(tid)
+          || (signedIn() && resource.data.uid == request.auth.uid && isOpen(tid)
+              && getAfter(uDoc(tid, request.auth.uid)).data.lastBet == betId
+              && getAfter(uDoc(tid, request.auth.uid)).data.points
+                   == get(uDoc(tid, request.auth.uid)).data.points + resource.data.amount);
+      }
+    }
+  }
+}

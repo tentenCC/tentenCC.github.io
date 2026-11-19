@@ -1,0 +1,41 @@
+# 大会オッズ（GitHub Pages 版）
+
+大会の優勝予想をポイントで投票し、競馬の単勝と同じパリミュチュエル方式でオッズを決める Web システムです。
+GitHub Pages（静的サイト）で動かすため、データ保存に **Firebase（Firestore + 匿名認証）** を使います。
+
+- 公開 URL：https://tentencc.github.io/odds/
+- `firebase-config.js` が未設定の間は **デモモード**（データはそのブラウザ内だけ、タブごとに別参加者）で動きます。
+
+## Firebase の準備（初回のみ・無料枠で動作）
+
+1. https://console.firebase.google.com/ で「プロジェクトを作成」（Google アナリティクスは不要）
+2. **Authentication** →「始める」→「Sign-in method」→ **匿名** を有効にする
+3. **Authentication** →「設定」→「承認済みドメイン」に `tentencc.github.io` を追加
+4. **Firestore Database** →「データベースを作成」→ 本番環境モード、ロケーションは `asia-northeast1`（東京）など
+5. Firestore の「ルール」タブに [`firestore.rules`](firestore.rules) の内容を貼り付けて「公開」
+6. 「プロジェクトの設定」→「マイアプリ」→ ウェブ（`</>`）でアプリを登録し、表示された `firebaseConfig` の値を
+   [`firebase-config.js`](firebase-config.js) に貼り付ける（この値は公開されても問題ない識別情報です）
+7. コミットして GitHub に push すると数分で公開されます
+
+## セキュリティの考え方
+
+サーバーがないため、不正な操作は Firestore のセキュリティルールで防いでいます。
+
+- 参加者は自分のポイントを「投票の作成／取消」と同時にしか増減できない（金額の整合性もルールで検証）
+- 投票は 100pt 単位・受付中のみ・存在する出場者のみ
+- 管理操作（締切・出場者の追加/取消・結果確定・削除）は管理者キーで登録された端末のみ
+- 管理者は参加者のポイントを変更できる権限を持つため、主催者が担当してください
+
+参加者の識別はブラウザごとの匿名ログインです。別の端末・ブラウザ、シークレットウィンドウでは別の参加者になります。
+
+## ファイル構成
+
+| ファイル | 内容 |
+|---|---|
+| index.html | 画面（スタイル） |
+| app.js | 画面の処理 |
+| common.js | オッズ計算・払戻計算 |
+| backend-firebase.js | Firebase への保存・リアルタイム同期 |
+| backend-local.js | デモモード（localStorage） |
+| firebase-config.js | Firebase の接続設定 |
+| firestore.rules | Firestore セキュリティルール |
