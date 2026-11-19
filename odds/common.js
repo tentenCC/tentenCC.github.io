@@ -92,15 +92,15 @@ export function buildRecords(t, ranks) {
   return out;
 }
 
-// 結果確定時の払戻計算。的中者がいなければ全額返還
+// 結果確定時の払戻計算。優勝チームへの投票だけが払い戻しの対象。
+// 優勝チームに誰も投票していなければ的中者なしで、全投票が没収（返還なし）
 export function computeSettlement(raw, winnerId) {
   const view = buildView({ ...raw, t: { ...raw.t, status: 'closed' } });
   const finalOdds = Object.fromEntries(view.entrants.map(e => [e.id, e.odds]));
   const winOdds = finalOdds[winnerId];
-  const refunded = winOdds == null;
   const payouts = {};
   for (const b of raw.bets) {
-    payouts[b.id] = refunded ? b.amount : (b.entrantId === winnerId ? Math.floor(b.amount * winOdds) : 0);
+    payouts[b.id] = b.entrantId === winnerId && winOdds != null ? Math.floor(b.amount * winOdds) : 0;
   }
-  return { winnerId, finalOdds, refunded, payouts };
+  return { winnerId, finalOdds, refunded: false, payouts };
 }

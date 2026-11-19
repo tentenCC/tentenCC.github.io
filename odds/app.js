@@ -175,7 +175,7 @@ function showHome() {
           参加者は持ちポイントを使って「優勝すると思うチーム」に投票します（${UNIT}pt 単位）。<br>
           オッズは競馬の単勝と同じ<b>パリミュチュエル方式</b>で、投票が集まるたびにリアルタイムに変動します。<br>
           <b>オッズ ＝ 総投票額 ×（1 − 控除率）÷ そのチームへの投票額</b>（0.1 倍未満切り捨て・最低 1.0 倍）<br>
-          大会終了後に管理者が順位を確定すると、的中した投票に「投票額 × 確定オッズ」が払い戻され、メンバーの戦績にも記録されます。的中者がいない場合は全額返還です。
+          大会終了後に管理者が順位を確定すると、的中した投票に「投票額 × 確定オッズ」が払い戻され、メンバーの戦績にも記録されます。優勝チームに誰も投票していなかった場合は的中者なしとなり、投票ポイントは返還されません。
         </p>
       </div>
     </div>
@@ -345,7 +345,8 @@ function renderBoard() {
       <span>控除率 <b>${Math.round(t.takeout * 100)}</b>%</span>
     </div>
     ${winner ? `<div class="result" style="margin-top:12px">🏆 優勝：<b>${esc(winner.name)}</b>
-      ${t.refunded ? '（的中者なしのため全額返還）' : `　単勝 <b>${fmtOdds(winner.odds)}</b> 倍`}</div>` : ''}
+      ${t.refunded ? '（的中者なしのため全額返還）'
+        : winner.odds == null ? '（的中者なし）' : `　単勝 <b>${fmtOdds(winner.odds)}</b> 倍`}</div>` : ''}
     <table class="board">
       <thead><tr><th>番</th><th>チーム</th><th style="text-align:right">オッズ</th><th style="text-align:center">${t.status === 'settled' ? '順位' : '人気'}</th>
         <th class="hideSm">支持率</th><th class="hideSm" style="text-align:right">投票額</th></tr></thead>
@@ -712,7 +713,9 @@ function renderAdmin() {
     const records = $('#recOn').checked ? buildRecords({ ...RAW.t, id: tid }, ranks) : [];
     const lines = T.entrants.filter(x => ranks[x.id]).sort((a, b) => ranks[a.id] - ranks[b.id])
       .map(x => `${rankLabel(ranks[x.id])}：${x.name}`).join('\n');
-    if (!confirm(`次の内容で確定します。取り消せません。\n\n${lines}\n\n優勝「${e.name}」の単勝オッズ：${fmtOdds(e.odds)} 倍\n戦績に記録：${records.length} 件\n\nよろしいですか？`)) return;
+    if (!confirm(`次の内容で確定します。取り消せません。\n\n${lines}\n\n${e.odds == null
+      ? `優勝「${e.name}」には誰も投票していないため的中者なしとなり、全員の投票ポイントは返還されません。`
+      : `優勝「${e.name}」の単勝オッズ：${fmtOdds(e.odds)} 倍`}\n戦績に記録：${records.length} 件\n\nよろしいですか？`)) return;
     run(() => backend.settle(tid, RAW, { ...computeSettlement(RAW, winnerId), ranks, records }), '結果を確定しました');
   });
 
