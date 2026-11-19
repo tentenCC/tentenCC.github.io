@@ -12,7 +12,12 @@ service cloud.firestore {
     function aDoc(tid, uid) { return /databases/$(database)/documents/tournaments/$(tid)/admins/$(uid); }
     function keyDoc(tid) { return /databases/$(database)/documents/tournaments/$(tid)/private/admin; }
 
-    function isAdmin(tid) { return signedIn() && exists(aDoc(tid, request.auth.uid)); }
+    function siteDoc(d) { return /databases/$(database)/documents/site/$(d); }
+    function sDoc(uid) { return /databases/$(database)/documents/siteAdmins/$(uid); }
+    // サイト管理者（大会作成・名簿・戦績の編集、全大会の管理）
+    function isSiteAdmin() { return signedIn() && exists(sDoc(request.auth.uid)); }
+    // 大会の管理者（その大会の管理者キーでログインした端末、またはサイト管理者）
+    function isAdmin(tid) { return signedIn() && (exists(aDoc(tid, request.auth.uid)) || isSiteAdmin()); }
     function isOpen(tid) { return get(tDoc(tid)).data.status == 'open'; }
     function validName(s, max) { return s is string && s.size() >= 1 && s.size() <= max; }
     // 同じバッチで自分がオーナーの大会を新規作成しているか
@@ -39,9 +44,9 @@ service cloud.firestore {
 
     match /tournaments/{tid} {
       allow read: if true;
-      allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['name', 'status', 'takeout', 'initialPoints', 'ownerUid',
-             'entrants', 'entrantIds', 'winnerId', 'finalOdds', 'refunded', 'createdAt'])
+      allow create: if isSiteAdmin()
+        && request.resource.data.keys().hasOnly(['name', 'date', 'status', 'takeout', 'initialPoints', 'ownerUid',
+             'entrants', 'entrantIds', 'winnerId', 'finalOdds', 'refunded', 'ranks', 'createdAt'])
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.status == 'open'
         && validName(request.resource.data.name, 60)
@@ -60,7 +65,7 @@ service cloud.firestore {
       allow update: if isAdmin(tid)
         && resource.data.status != 'settled'
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['name', 'status', 'entrants', 'entrantIds', 'winnerId', 'finalOdds', 'refunded'])
+             .hasOnly(['name', 'date', 'status', 'entrants', 'entrantIds', 'winnerId', 'finalOdds', 'refunded', 'ranks'])
         && request.resource.data.status in ['open', 'closed', 'settled']
         && (request.resource.data.status != 'settled' || resource.data.status == 'closed')
         && request.resource.data.entrantIds.size() >= 2;
@@ -122,6 +127,61 @@ service cloud.firestore {
               && getAfter(uDoc(tid, request.auth.uid)).data.points
                    == get(uDoc(tid, request.auth.uid)).data.points + resource.data.amount);
       }
+    }
+
+    // ---- サイト管理者 ----
+    // site/meta: 初期設定済みの印（誰でも読める） / site/admin: サイト管理者キー（サイト管理者のみ）
+    match /site/{d} {
+      allow read: if d == 'meta' || (d == 'admin' && isSiteAdmin());
+      allow create: if signedIn() && !exists(siteDoc('admin')) && (
+        (d == 'meta' && existsAfter(siteDoc('admin'))
+          && request.resource.data.keys().hasOnly(['initializedAt']))
+        ||
+        (d == 'admin' && existsAfter(siteDoc('meta')) && existsAfter(sDoc(request.auth.uid))
+          && request.resource.data.keys().hasOnly(['key'])
+          && request.resource.data.key is string && request.resource.data.key.size() >= 16)
+      );
+    }
+    match /siteAdmins/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isSiteAdmin());
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['key'])
+        && ((exists(siteDoc('admin')) && request.resource.data.key == get(siteDoc('admin')).data.key)
+            || (!exists(siteDoc('admin')) && getAfter(siteDoc('admin')).data.key == request.resource.data.key));
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // ---- メンバー名簿 ----
+    match /members/{mid} {
+      allow read: if true;
+      allow create, update: if isSiteAdmin()
+        && request.resource.data.keys().hasOnly(['name', 'note', 'createdAt'])
+        && validName(request.resource.data.name, 40)
+        && request.resource.data.note is string && request.resource.data.note.size() <= 200;
+      allow delete: if isSiteAdmin();
+    }
+
+    // ---- 戦績（メンバー × 大会 1 件） ----
+    function validRecord(d) {
+      return d.keys().hasOnly(['memberId', 'tournamentId', 'tournamentName', 'date', 'teamName', 'rank', 'teamCount', 'createdAt'])
+        && d.memberId is string
+        && (d.tournamentId == null || d.tournamentId is string)
+        && validName(d.tournamentName, 60)
+        && d.date is string && d.date.size() <= 10
+        && d.teamName is string && d.teamName.size() <= 40
+        && d.rank is int && d.rank >= 1 && d.rank <= 999
+        && (d.teamCount == null || (d.teamCount is int && d.teamCount >= d.rank && d.teamCount <= 999));
+    }
+    // 大会の管理者は、その大会の結果としての戦績だけ書き込める
+    function tournamentAdminFor(d) { return d.tournamentId is string && isAdmin(d.tournamentId); }
+    match /records/{rid} {
+      allow read: if true;
+      allow create: if validRecord(request.resource.data)
+        && (isSiteAdmin() || tournamentAdminFor(request.resource.data));
+      allow update: if validRecord(request.resource.data)
+        && (isSiteAdmin() || (tournamentAdminFor(request.resource.data)
+             && resource.data.tournamentId == request.resource.data.tournamentId));
+      allow delete: if isSiteAdmin();
     }
   }
 }

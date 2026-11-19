@@ -52,6 +52,46 @@ export function buildView(raw) {
   };
 }
 
+// ---------- チーム・戦績 ----------
+// 「チーム名：メンバー1、メンバー2」形式（1 行 1 チーム）を解析
+export function parseTeams(text) {
+  return String(text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+    const m = line.match(/^([^:：]+)[:：](.*)$/);
+    const name = (m ? m[1] : line).trim().slice(0, 40);
+    const members = m ? [...new Set(m[2].split(/[,、，/／]/).map(s => s.trim().slice(0, 40)).filter(Boolean))] : [];
+    return { name, members };
+  });
+}
+export const splitNames = text => [...new Set(String(text || '').split(/[,、，/／\n]/).map(s => s.trim().slice(0, 40)).filter(Boolean))];
+
+export const rankLabel = r => r === 1 ? '優勝' : r === 2 ? '準優勝' : r + '位';
+
+// メンバーの戦績集計
+export function memberStats(records) {
+  const n = records.length;
+  const wins = records.filter(r => r.rank === 1).length;
+  const best = n ? Math.min(...records.map(r => r.rank)) : null;
+  const avg = n ? records.reduce((s, r) => s + r.rank, 0) / n : null;
+  return { count: n, wins, best, avg };
+}
+export const sortRecords = recs => [...recs].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0));
+
+// 確定時の戦績レコード（メンバー × 大会で 1 件、ID 固定で再実行しても重複しない）
+export function buildRecords(t, ranks) {
+  const out = [];
+  for (const e of t.entrants) {
+    const rank = ranks[e.id];
+    if (!rank) continue;
+    for (const mid of e.memberIds || []) {
+      out.push({
+        id: `${t.id}_${mid}`, memberId: mid, tournamentId: t.id, tournamentName: t.name,
+        date: t.date || '', teamName: e.name, rank, teamCount: t.entrants.length, createdAt: Date.now(),
+      });
+    }
+  }
+  return out;
+}
+
 // 結果確定時の払戻計算。的中者がいなければ全額返還
 export function computeSettlement(raw, winnerId) {
   const view = buildView({ ...raw, t: { ...raw.t, status: 'closed' } });

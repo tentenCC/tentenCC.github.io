@@ -3,7 +3,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   getFirestore, collection, doc, onSnapshot, query, orderBy, limit, writeBatch,
-  runTransaction, setDoc, updateDoc, deleteDoc, getDocs, increment,
+  runTransaction, setDoc, updateDoc, deleteDoc, getDoc, getDocs, increment, where,
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import { randomHex, UNIT } from './common.js';
 
@@ -52,6 +52,16 @@ export function createFirebaseBackend(config) {
 
     watchTournament(tid, cb, onErr) {
       const state = { t: undefined, users: [], bets: [], uid: null, isAdmin: false, adminKey: null };
+      let tAdmin = false, tKey = null, siteAdmin = false, fetchedKey = null;
+      // サイト管理者は全大会の管理者。大会の管理者キーは private/admin から取得
+      const updateAdmin = () => {
+        state.isAdmin = tAdmin || siteAdmin;
+        state.adminKey = tKey || fetchedKey || null;
+        if (siteAdmin && !tKey && fetchedKey === null) {
+          fetchedKey = '';
+          getDoc(subDoc(tid, 'private', 'admin')).then(s => { fetchedKey = s.exists() ? s.data().key : ''; updateAdmin(); emit(); }, () => {});
+        }
+      };
       const unsubs = [];
       let stopped = false;
       const emit = () => { if (state.t !== undefined) cb({ ...state }); };
@@ -62,22 +72,23 @@ export function createFirebaseBackend(config) {
         unsubs.push(onSnapshot(sub(tid, 'users'), s => { state.users = s.docs.map(d => ({ id: d.id, ...d.data() })); emit(); }, onErr));
         unsubs.push(onSnapshot(sub(tid, 'bets'), s => { state.bets = s.docs.map(d => ({ id: d.id, ...d.data() })); emit(); }, onErr));
         unsubs.push(onSnapshot(subDoc(tid, 'admins', u), s => {
-          state.isAdmin = s.exists(); state.adminKey = s.exists() ? s.data().key : null; emit();
+          tAdmin = s.exists(); tKey = s.exists() ? s.data().key : null; updateAdmin(); emit();
         }, () => {}));
+        unsubs.push(onSnapshot(doc(db, 'siteAdmins', u), s => { siteAdmin = s.exists(); updateAdmin(); emit(); }, () => {}));
       }, onErr);
       return () => { stopped = true; unsubs.forEach(f => f()); };
     },
 
-    async createTournament({ name, entrants, initialPoints, takeout }) {
+    async createTournament({ name, date, teams, initialPoints, takeout }) {
       await ready;
       const ref = doc(collection(db, 'tournaments'));
       const key = randomHex(12);
-      const ents = entrants.map(n => ({ id: randomHex(4), name: n }));
+      const ents = teams.map(tm => ({ id: randomHex(4), name: tm.name, memberIds: tm.memberIds }));
       const b = writeBatch(db);
       b.set(ref, {
-        name, status: 'open', takeout, initialPoints, ownerUid: uid,
+        name, date, status: 'open', takeout, initialPoints, ownerUid: uid,
         entrants: ents, entrantIds: ents.map(e => e.id),
-        winnerId: null, finalOdds: null, refunded: false, createdAt: Date.now(),
+        winnerId: null, finalOdds: null, refunded: false, ranks: null, createdAt: Date.now(),
       });
       b.set(subDoc(ref.id, 'private', 'admin'), { key });
       b.set(subDoc(ref.id, 'admins', uid), { key });
@@ -126,9 +137,13 @@ export function createFirebaseBackend(config) {
 
     async setStatus(tid, status) { await updateDoc(tRef(tid), { status }); },
 
-    async addEntrant(tid, raw, name) {
-      const ents = [...raw.t.entrants, { id: randomHex(4), name }];
+    async addEntrant(tid, raw, team) {
+      const ents = [...raw.t.entrants, { id: randomHex(4), name: team.name, memberIds: team.memberIds }];
       await updateDoc(tRef(tid), { entrants: ents, entrantIds: ents.map(e => e.id) });
+    },
+    async updateEntrant(tid, raw, entrantId, team) {
+      const ents = raw.t.entrants.map(e => e.id === entrantId ? { ...e, name: team.name, memberIds: team.memberIds } : e);
+      await updateDoc(tRef(tid), { entrants: ents });
     },
 
     // 出場者の取消：その出場者への投票を返還して削除
@@ -158,8 +173,14 @@ export function createFirebaseBackend(config) {
         });
         sizes.push(1 + myBets.length);
       }
+      // 戦績を書き込んでから大会を確定（確定後は大会を変更できないため）
+      for (const r of plan.records || []) {
+        const { id, ...data } = r;
+        groups.push(batch => batch.set(doc(db, 'records', id), data));
+        sizes.push(1);
+      }
       groups.push(batch => batch.update(tRef(tid), {
-        status: 'settled', winnerId: plan.winnerId, finalOdds: plan.finalOdds, refunded: plan.refunded,
+        status: 'settled', winnerId: plan.winnerId, finalOdds: plan.finalOdds, refunded: plan.refunded, ranks: plan.ranks || null,
       }));
       sizes.push(1);
       await commitGroups(groups, sizes);
@@ -179,6 +200,85 @@ export function createFirebaseBackend(config) {
       });
       await commitGroups(groups, groups.map((_, i) => i < groups.length - 1 ? 1 : admins.size + 2));
     },
+
+    // ---------- サイト管理者 ----------
+    watchSite(cb) {
+      const state = { initialized: null, isSiteAdmin: false, siteKey: null };
+      const unsubs = []; let stopped = false;
+      ready.then(u => {
+        if (stopped) return;
+        unsubs.push(onSnapshot(doc(db, 'site', 'meta'), s => { state.initialized = s.exists(); cb({ ...state }); }, () => {}));
+        unsubs.push(onSnapshot(doc(db, 'siteAdmins', u), s => {
+          state.isSiteAdmin = s.exists(); state.siteKey = s.exists() ? s.data().key : null; cb({ ...state });
+        }, () => {}));
+      });
+      return () => { stopped = true; unsubs.forEach(f => f()); };
+    },
+    async initSite() {
+      await ready;
+      const key = randomHex(12);
+      const b = writeBatch(db);
+      b.set(doc(db, 'site', 'admin'), { key });
+      b.set(doc(db, 'site', 'meta'), { initializedAt: Date.now() });
+      b.set(doc(db, 'siteAdmins', uid), { key });
+      await b.commit();
+      return key;
+    },
+    async siteLogin(key) {
+      await ready;
+      try { await setDoc(doc(db, 'siteAdmins', uid), { key }); }
+      catch (e) { throw new Error('サイト管理者キーが正しくありません'); }
+    },
+    async siteLogout() { await ready; await deleteDoc(doc(db, 'siteAdmins', uid)); },
+
+    // ---------- メンバー名簿 ----------
+    watchMembers(cb, onErr) {
+      let unsub = () => {}, stopped = false;
+      ready.then(() => {
+        if (stopped) return;
+        unsub = onSnapshot(collection(db, 'members'), s => cb(s.docs.map(d => ({ id: d.id, ...d.data() }))), onErr);
+      });
+      return () => { stopped = true; unsub(); };
+    },
+    async saveMember({ id, name, note, createdAt }) {
+      const ref = id ? doc(db, 'members', id) : doc(collection(db, 'members'));
+      await setDoc(ref, { name, note: note || '', createdAt: createdAt || Date.now() });
+      return ref.id;
+    },
+    // 複数メンバーを一括登録して ID を返す
+    async createMembers(names) {
+      const refs = names.map(() => doc(collection(db, 'members')));
+      const groups = names.map((n, i) => batch => batch.set(refs[i], { name: n, note: '', createdAt: Date.now() }));
+      await commitGroups(groups, groups.map(() => 1));
+      return refs.map(r => r.id);
+    },
+    // メンバーと、そのメンバーの戦績をまとめて削除
+    async deleteMember(id) {
+      const recs = await getDocs(query(collection(db, 'records'), where('memberId', '==', id)));
+      const groups = recs.docs.map(d => batch => batch.delete(d.ref));
+      groups.push(batch => batch.delete(doc(db, 'members', id)));
+      await commitGroups(groups, groups.map(() => 1));
+    },
+
+    // ---------- 戦績 ----------
+    // memberIds を省略すると全件
+    async getRecords(memberIds) {
+      await ready;
+      const col = collection(db, 'records');
+      if (!memberIds) return (await getDocs(col)).docs.map(d => ({ id: d.id, ...d.data() }));
+      const out = [];
+      for (let i = 0; i < memberIds.length; i += 30) {
+        const s = await getDocs(query(col, where('memberId', 'in', memberIds.slice(i, i + 30))));
+        out.push(...s.docs.map(d => ({ id: d.id, ...d.data() })));
+      }
+      return out;
+    },
+    async saveRecord(rec) {
+      const { id, ...data } = rec;
+      const ref = id ? doc(db, 'records', id) : doc(collection(db, 'records'));
+      await setDoc(ref, { ...data, createdAt: data.createdAt || Date.now() });
+    },
+    async deleteRecord(id) { await deleteDoc(doc(db, 'records', id)); },
   };
 }
 

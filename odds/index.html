@@ -89,16 +89,66 @@ button.small{font-size:12px;padding:4px 8px}
 .toast.show{opacity:1}
 .demo{background:#fef3c7;color:#92400e;font-size:13px;padding:8px 16px;text-align:center}
 .demo[hidden]{display:none}
+header{flex-wrap:wrap}
+header .sub{flex:1;min-width:160px}
+nav{display:flex;gap:4px}
+nav a{padding:6px 12px;border-radius:6px;font-size:14px;opacity:.85}
+nav a:hover{background:rgba(255,255,255,.12);opacity:1}
+nav a.on{background:rgba(255,255,255,.2);opacity:1;font-weight:700}
+.ename .members{display:block;font-size:12px;font-weight:400;color:var(--muted);margin-top:2px}
+.ename .info{font-size:11px;font-weight:600;color:var(--primary);border:1px solid #bbf7d0;border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap}
+.board tr.pick,.board tr.view{cursor:pointer}
+.board tr.view:hover td{background:#f8fafc}
+.modal{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:flex-start;justify-content:center;z-index:100;padding:40px 16px;overflow:auto}
+.modal[hidden]{display:none}
+.modal-box{background:#fff;border-radius:12px;padding:20px;width:min(640px,100%);box-shadow:0 20px 50px rgba(0,0,0,.3)}
+.modal-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:6px}
+.modal-head h2{flex:1;margin:0;font-size:20px}
+.modal-foot{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
+.mcard{border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;margin-top:10px}
+.mcard .top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.mcard .nm{font-weight:700;font-size:15px}
+.mcard .nm a{color:inherit}
+.mcard .note{font-size:12px;color:var(--muted)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.chip{font-size:12px;background:#f3f4f6;border-radius:999px;padding:2px 10px;white-space:nowrap}
+.chip.gold{background:#fef3c7;color:#92400e;font-weight:700}
+.rec{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+.rec th{font-size:11px;color:var(--muted);text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+.rec td{padding:5px 6px;border-bottom:1px solid #f1f5f9}
+.rec td.rk{white-space:nowrap;font-weight:700}
+.rec td.rk.r1{color:var(--gold)}
+.tbl{width:100%;border-collapse:collapse;font-size:14px}
+.tbl th{font-size:12px;color:var(--muted);text-align:left;padding:6px 8px;border-bottom:2px solid var(--line);white-space:nowrap}
+.tbl td{padding:8px;border-bottom:1px solid #eef0f3}
+.tbl td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tbl tr.link{cursor:pointer}
+.tbl tr.link:hover td{background:#f0fdf4}
+.rankIn{width:70px !important;text-align:right}
+.back{font-size:13px;color:var(--muted);text-decoration:none}
+.back:hover{color:var(--text)}
+.big{font-size:22px;font-weight:800}
+.statGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+.statGrid div{background:#f8fafc;border-radius:8px;padding:10px;text-align:center}
+.statGrid b{display:block;font-size:20px}
+.statGrid span{font-size:12px;color:var(--muted)}
+@media (max-width:600px){.statGrid{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
 <header>
   <a href="#/"><h1>🏆 大会オッズ</h1></a>
   <span class="sub">優勝予想の投票数でオッズが決まる予想システム（ポイント制）</span>
+  <nav>
+    <a href="#/" data-nav="home">大会</a>
+    <a href="#/members" data-nav="members">メンバー</a>
+    <a href="#/admin" data-nav="admin" id="navAdmin">管理</a>
+  </nav>
 </header>
 <div class="demo" id="demoBar" hidden>デモモード：Firebase が未設定のため、データはこのブラウザ内だけに保存されます（タブごとに別の参加者になります）。</div>
 <main id="app"><div class="card empty">読み込み中…</div></main>
 <div class="toast" id="toast"></div>
+<div class="modal" id="modal" hidden><div class="modal-box" id="modalBox" role="dialog" aria-modal="true"></div></div>
 
 <script type="module" src="app.js"></script>
 </body>
