@@ -52,6 +52,11 @@ button.small{font-size:12px;padding:4px 8px}
 .board{width:100%;border-collapse:collapse;margin-top:12px}
 .board th{font-size:12px;color:var(--muted);text-align:left;padding:6px 8px;border-bottom:2px solid var(--line);white-space:nowrap}
 .board td{padding:8px;border-bottom:1px solid #eef0f3;vertical-align:middle}
+.board th.sort{cursor:pointer;user-select:none}
+.board th.sort:hover{color:var(--text)}
+.board th.sort .arrow{font-size:10px;margin-left:3px;opacity:.5}
+.board th.sorted{color:var(--primary)}
+.board th.sorted .arrow{opacity:1}
 .board tr.pick{cursor:pointer}
 .board tr.pick:hover td{background:#f0fdf4}
 .board tr.sel td{background:#dcfce7}

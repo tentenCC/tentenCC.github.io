@@ -289,6 +289,8 @@ let selected = null;   // 選択中のチーム ID
 let tid = null;
 let justCreated = null;
 let adminSig = '';     // 管理者メニューの再描画判定用
+// オッズ表の並び順。dir: 1 = 各列の基本の向き（オッズ・人気・順位は小さい順、支持率は高い順）、-1 = 逆
+let boardSort = { key: 'num', dir: 1 };
 
 function showTournament(id) {
   tid = id; RAW = null; T = null; selected = null; adminSig = ''; betFormBuilt = false;
@@ -332,6 +334,29 @@ function renderBoard() {
   const canPick = t.status === 'open' && !!t.me;
   const ranks = RAW.t.ranks || {};
   const memberIdsOf = id => (RAW.t.entrants.find(e => e.id === id) || {}).memberIds || [];
+  // 並べ替え（値がないチームは向きに関係なく末尾、同じ値は番号順）
+  const settledView = t.status === 'settled';
+  if (boardSort.key === 'rank' && !settledView) boardSort = { key: 'pop', dir: 1 };
+  if (boardSort.key === 'pop' && settledView) boardSort = { key: 'rank', dir: 1 };
+  const sortVal = {
+    num: e => 0,
+    odds: e => e.odds,
+    pop: e => e.popularity,
+    rank: e => ranks[e.id] || null,
+    share: e => -e.share,
+  }[boardSort.key] || (() => 0);
+  const rows = t.entrants.map((e, i) => ({ e, i }));
+  if (boardSort.key === 'num') { if (boardSort.dir < 0) rows.reverse(); }
+  else rows.sort((a, b) => {
+    const va = sortVal(a.e), vb = sortVal(b.e);
+    if (va == null || vb == null) return (va == null) - (vb == null) || a.i - b.i;
+    return (va - vb) * boardSort.dir || a.i - b.i;
+  });
+  const sortTh = (key, label, cls = '', align = '') => {
+    const on = boardSort.key === key;
+    const arrow = on ? (key === 'share' ? (boardSort.dir > 0 ? '▼' : '▲') : (boardSort.dir > 0 ? '▲' : '▼')) : '⇅';
+    return `<th class="sort ${on ? 'sorted' : ''} ${cls}" data-sort="${key}" title="クリックで並べ替え"${align ? ` style="text-align:${align}"` : ''}>${label}<span class="arrow">${arrow}</span></th>`;
+  };
   $('#boardCard').innerHTML = `
     <div class="tHead">
       <h2>${esc(t.name)}</h2>
@@ -348,10 +373,10 @@ function renderBoard() {
       ${t.refunded ? '（的中者なしのため全額返還）'
         : winner.odds == null ? '（的中者なし）' : `　単勝 <b>${fmtOdds(winner.odds)}</b> 倍`}</div>` : ''}
     <table class="board">
-      <thead><tr><th>番</th><th>チーム</th><th style="text-align:right">オッズ</th><th style="text-align:center">${t.status === 'settled' ? '順位' : '人気'}</th>
-        <th class="hideSm">支持率</th><th class="hideSm" style="text-align:right">投票額</th></tr></thead>
+      <thead><tr>${sortTh('num', '番')}<th>チーム</th>${sortTh('odds', 'オッズ', '', 'right')}${settledView ? sortTh('rank', '順位', '', 'center') : sortTh('pop', '人気', '', 'center')}
+        ${sortTh('share', '支持率', 'hideSm')}<th class="hideSm" style="text-align:right">投票額</th></tr></thead>
       <tbody>
-      ${t.entrants.map((e, i) => {
+      ${rows.map(({ e, i }) => {
         const mids = memberIdsOf(e.id);
         return `
         <tr data-id="${esc(e.id)}" class="${canPick ? 'pick' : 'view'} ${e.id === selected ? 'sel' : ''} ${e.id === t.winnerId ? 'win' : ''}">
@@ -372,6 +397,12 @@ function renderBoard() {
     <p class="hint">チームをクリックすると、メンバーと過去の戦績を確認できます${canPick ? '（そこから投票先に選べます）' : ''}。オッズはリアルタイムに更新されます。</p>
     ${t.status === 'open' && !t.me ? '<p class="hint">投票するには参加登録してください。</p>' : ''}`;
   $('#boardCard').querySelectorAll('tr[data-id]').forEach(tr => tr.onclick = () => openTeamModal(tr.dataset.id));
+  // 同じ列をもう一度クリックすると逆順
+  $('#boardCard').querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => {
+    const key = th.dataset.sort;
+    boardSort = boardSort.key === key ? { key, dir: -boardSort.dir } : { key, dir: 1 };
+    renderBoard();
+  });
 }
 
 // チームのメンバー・戦績ポップアップ
