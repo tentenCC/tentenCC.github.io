@@ -382,14 +382,20 @@ function entryTaken(exceptId) {
   return { ids, names, teamNames, tags };
 }
 
+// エントリーのメンバーを、名簿にいる人は ID、いない人（新規）は名前に分ける
+function entryMembers(x) {
+  const pairs = [[x.selfId, x.selfName], [x.partnerId, x.partnerName]];
+  return {
+    mids: pairs.filter(([id]) => id && MEMBER_BY_ID[id]).map(([id]) => id),
+    newNames: pairs.filter(([id]) => !(id && MEMBER_BY_ID[id])).map(([, n]) => n),
+  };
+}
+const showEntryDetail = x => showTeamDetail({ name: x.teamName, tag: x.teamTag, server: x.server, message: x.message, ...entryMembers(x) });
+
 // エントリー受付中のチーム一覧（オッズ表の代わり）
 function renderEntryBoard() {
   const t = T, list = entryList();
-  // 名簿にいる人は ID、いない人（新規）は名前で持つ
-  const split = pairs => ({
-    mids: pairs.filter(([id]) => id && MEMBER_BY_ID[id]).map(([id]) => id),
-    newNames: pairs.filter(([id]) => !(id && MEMBER_BY_ID[id])).map(([, n]) => n),
-  });
+  const split = pairs => entryMembers({ selfId: pairs[0][0], selfName: pairs[0][1], partnerId: pairs[1][0], partnerName: pairs[1][1] });
   const rows = [
     ...RAW.t.entrants.map(e => ({ name: e.name, tag: e.tag || '', members: (e.memberIds || []).map(id => esc(memberName(id))),
       server: e.server || '', message: e.message || '', mine: false, mids: e.memberIds || [], newNames: [] })),
@@ -899,7 +905,8 @@ function renderAdmin() {
       ${entryList().length ? `<table class="rec">
         <tbody>${entryList().map(x => `<tr>
           <td><b>${esc(x.teamName)}</b>${tagChip(x.teamTag)}<div class="hint">${entryMemberHtml(x.selfId, x.selfName)}、${entryMemberHtml(x.partnerId, x.partnerName)}</div></td>
-          <td style="text-align:right"><button class="small danger" data-del-entry="${esc(x.id)}">削除</button></td></tr>`).join('')}</tbody>
+          <td style="text-align:right;white-space:nowrap"><button class="small" data-view-entry="${esc(x.id)}">メンバー・戦績</button>
+            <button class="small danger" data-del-entry="${esc(x.id)}">削除</button></td></tr>`).join('')}</tbody>
       </table>` : '<p class="hint">まだエントリーがありません。</p>'}
       <button class="primary wide" id="admEntryClose" style="margin-top:8px">エントリーを締め切って投票を開始</button>
       <p class="hint">締め切ると、各エントリーがチームとして大会に追加され、投票（オッズ）が始まります。名簿にない「新規」の人は、このときメンバー一覧に登録されます。締め切った後はエントリー受付に戻せません。</p>`
@@ -913,6 +920,7 @@ function renderAdmin() {
       <input type="text" id="teamName" maxlength="40" placeholder="チーム名" style="margin-top:6px">
       <div id="teamPick" style="margin-top:6px"></div>
       <button class="wide" id="teamSave" style="margin-top:6px">チームを追加</button>
+      <button class="wide" id="admView" style="margin-top:6px" hidden>このチームのメンバー・戦績を見る</button>
       <button class="wide danger" id="admRemove" style="margin-top:6px" hidden>このチームを取消（投票は返還）</button>
       ${t.status === 'entry' ? '' : `
       <h3>結果の確定（順位の入力）</h3>
@@ -941,6 +949,10 @@ function renderAdmin() {
   on('admOpen', () => run(() => backend.setStatus(tid, 'open'), '投票を再開しました'));
 
   // エントリーの削除・締切
+  card.querySelectorAll('[data-view-entry]').forEach(b => b.onclick = () => {
+    const x = (RAW.entries || []).find(e => e.id === b.dataset.viewEntry);
+    if (x) showEntryDetail(x);
+  });
   card.querySelectorAll('[data-del-entry]').forEach(b => b.onclick = () => {
     const x = (RAW.entries || []).find(e => e.id === b.dataset.delEntry); if (!x) return;
     if (!confirm(`チーム「${x.teamName}」のエントリーを削除します。よろしいですか？`)) return;
@@ -994,8 +1006,14 @@ function renderAdmin() {
       teamPicker.set(e ? (e.memberIds || []) : []);
       $('#teamSave').textContent = e ? 'チームを更新' : 'チームを追加';
       $('#admRemove').hidden = !e;
+      $('#admView').hidden = !e;
     };
   }
+  on('admView', () => {
+    const e = RAW.t.entrants.find(x => x.id === teamSel.value); if (!e) return;
+    if (T.status === 'entry') showTeamDetail({ name: e.name, tag: e.tag, server: e.server, message: e.message, mids: e.memberIds || [] });
+    else openTeamModal(e.id);
+  });
   on('teamSave', () => {
     const id = teamSel.value;
     const name = cleanName($('#teamName').value, 40);
