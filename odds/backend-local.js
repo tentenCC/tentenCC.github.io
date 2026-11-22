@@ -155,16 +155,21 @@ export function createLocalBackend() {
     watchMembers(cb) {
       return subscribe(() => cb(Object.entries(load().members).map(([id, m]) => ({ id, ...m }))));
     },
-    async saveMember({ id, name, note, createdAt }) {
+    async saveMember({ id, name, note, role, createdAt }) {
       const d = load(); requireSite(d);
       const mid = id || randomHex(8);
-      d.members[mid] = { name, note: note || '', createdAt: createdAt || Date.now() };
+      d.members[mid] = { name, note: note || '', role: role || '', createdAt: createdAt || Date.now() };
       save(d);
       return mid;
     },
-    async createMembers(names) {
+    async saveMembers(members) {
       const d = load(); requireSite(d);
-      const ids = names.map(n => { const id = randomHex(8); d.members[id] = { name: n, note: '', createdAt: Date.now() }; return id; });
+      for (const m of members) d.members[m.id] = { name: m.name, note: m.note || '', role: m.role || '', createdAt: m.createdAt || Date.now() };
+      save(d);
+    },
+    async createMembers(names, role = '') {
+      const d = load(); requireSite(d);
+      const ids = names.map(n => { const id = randomHex(8); d.members[id] = { name: n, note: '', role, createdAt: Date.now() }; return id; });
       save(d);
       return ids;
     },

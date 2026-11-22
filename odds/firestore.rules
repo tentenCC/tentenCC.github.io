@@ -164,7 +164,8 @@ service cloud.firestore {
     match /members/{mid} {
       allow read: if true;
       allow create, update: if isSiteAdmin()
-        && request.resource.data.keys().hasOnly(['name', 'note', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['name', 'note', 'role', 'createdAt'])
+        && (!('role' in request.resource.data) || request.resource.data.role in ['', '初心者', 'OB', '保護者', '天上人'])
         && validName(request.resource.data.name, 40)
         && request.resource.data.note is string && request.resource.data.note.size() <= 200;
       allow delete: if isSiteAdmin();

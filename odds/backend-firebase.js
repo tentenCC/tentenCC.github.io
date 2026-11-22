@@ -254,15 +254,21 @@ export function createFirebaseBackend(config) {
       });
       return () => { stopped = true; unsub(); };
     },
-    async saveMember({ id, name, note, createdAt }) {
+    async saveMember({ id, name, note, role, createdAt }) {
       const ref = id ? doc(db, 'members', id) : doc(collection(db, 'members'));
-      await setDoc(ref, { name, note: note || '', createdAt: createdAt || Date.now() });
+      await setDoc(ref, { name, note: note || '', role: role || '', createdAt: createdAt || Date.now() });
       return ref.id;
     },
+    // 既存メンバーをまとめて保存（members: [{ id, name, note, role, createdAt }]）
+    async saveMembers(members) {
+      const groups = members.map(m => batch => batch.set(doc(db, 'members', m.id),
+        { name: m.name, note: m.note || '', role: m.role || '', createdAt: m.createdAt || Date.now() }));
+      await commitGroups(groups, groups.map(() => 1));
+    },
     // 複数メンバーを一括登録して ID を返す
-    async createMembers(names) {
+    async createMembers(names, role = '') {
       const refs = names.map(() => doc(collection(db, 'members')));
-      const groups = names.map((n, i) => batch => batch.set(refs[i], { name: n, note: '', createdAt: Date.now() }));
+      const groups = names.map((n, i) => batch => batch.set(refs[i], { name: n, note: '', role, createdAt: Date.now() }));
       await commitGroups(groups, groups.map(() => 1));
       return refs.map(r => r.id);
     },

@@ -64,6 +64,24 @@ export function parseTeams(text) {
 }
 export const splitNames = text => [...new Set(String(text || '').split(/[,、，/／\n]/).map(s => s.trim().slice(0, 40)).filter(Boolean))];
 
+// メンバーのロール（選択式）。未設定は ''
+export const ROLES = ['初心者', 'OB', '保護者', '天上人'];
+export const validRole = r => ROLES.includes(r) ? r : '';
+
+// メモからロールを推定する（ロール未設定のメンバー用）
+// - メモがロール名そのもの（例「OB」）→ そのロールに設定し、メモは空にする
+// - メモにロール名が 1 つだけ含まれる（例「OB（2019年卒）」）→ そのロールに設定し、メモは残す
+// - 該当なし・複数含まれる → 対象外
+export function roleFromNote(note) {
+  const n = String(note || '').trim();
+  if (!n) return null;
+  const norm = s => s.normalize('NFKC').toUpperCase();
+  const exact = ROLES.find(r => norm(r) === norm(n));
+  if (exact) return { role: exact, note: '' };
+  const found = ROLES.filter(r => norm(n).includes(norm(r)));
+  return found.length === 1 ? { role: found[0], note: n } : null;
+}
+
 // 順位なし（初戦敗退など）は rank = null
 export const rankLabel = r => r == null ? '順位なし' : r === 1 ? '優勝' : r === 2 ? '準優勝' : r + '位';
 

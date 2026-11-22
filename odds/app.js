@@ -2,7 +2,7 @@
 import { firebaseConfig } from './firebase-config.js';
 import {
   UNIT, calcOdds, buildView, computeSettlement, splitNames,
-  rankLabel, memberStats, sortRecords, buildRecords,
+  rankLabel, memberStats, sortRecords, buildRecords, ROLES, validRole, roleFromNote,
 } from './common.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -65,6 +65,11 @@ backend.watchMembers(list => {
 }, e => console.error(e));
 
 const memberName = id => (MEMBER_BY_ID[id] || { name: '(削除されたメンバー)' }).name;
+// ロールの表示・選択肢
+const ROLE_CLASS = { '初心者': 'r-beg', 'OB': 'r-ob', '保護者': 'r-par', '天上人': 'r-top' };
+const roleBadge = r => validRole(r) ? `<span class="role ${ROLE_CLASS[r]}">${esc(r)}</span>` : '';
+const roleOptions = (cur, emptyLabel = '未設定') =>
+  `<option value="">${emptyLabel}</option>` + ROLES.map(r => `<option value="${esc(r)}"${r === cur ? ' selected' : ''}>${esc(r)}</option>`).join('');
 
 // ---------- メンバー選択部品 ----------
 // 名簿から検索して選ぶ。選択は {id}（登録済み）または {name}（新規登録予定）
@@ -91,11 +96,11 @@ function createPicker(el, { initial = [], takenBy = () => ({}), allowNew = false
   const renderList = () => {
     const q = inp.value.trim();
     const taken = takenBy();
-    const cands = MEMBERS.filter(m => !items.some(x => x.id === m.id) && (!q || m.name.includes(q) || (m.note || '').includes(q)));
+    const cands = MEMBERS.filter(m => !items.some(x => x.id === m.id) && (!q || m.name.includes(q) || (m.note || '').includes(q) || (m.role || '') === q));
     const exact = MEMBERS.some(m => m.name === q) || items.some(x => x.name === q);
     let html = cands.slice(0, 50).map(m => taken[m.id]
       ? `<div class="pkItem off">${esc(m.name)}<small>${esc(taken[m.id])} に登録済み</small></div>`
-      : `<button type="button" class="pkItem" data-id="${esc(m.id)}">${esc(m.name)}${m.note ? `<small>${esc(m.note)}</small>` : ''}</button>`).join('');
+      : `<button type="button" class="pkItem" data-id="${esc(m.id)}"><span>${esc(m.name)}${roleBadge(m.role)}</span>${m.note ? `<small>${esc(m.note)}</small>` : ''}</button>`).join('');
     if (cands.length > 50) html += `<div class="pkItem off">ほか ${cands.length - 50} 名（名前で絞り込んでください）</div>`;
     if (q && !exact && allowNew) html += `<button type="button" class="pkItem add" data-new="${esc(q)}">＋「${esc(q)}」を新しいメンバーとして追加</button>`;
     if (!html) html = `<div class="pkItem off">${MEMBERS.length ? '該当するメンバーがいません' : 'メンバーが登録されていません'}</div>`;
@@ -450,7 +455,7 @@ async function openTeamModal(eid) {
     return `
       <div class="mcard">
         <div class="top">
-          <span class="nm">${m ? `<a href="#/m/${esc(mid)}">${esc(m.name)}</a>` : '(削除されたメンバー)'}</span>
+          <span class="nm">${m ? `<a href="#/m/${esc(mid)}">${esc(m.name)}</a>${roleBadge(m.role)}` : '(削除されたメンバー)'}</span>
           ${m && m.note ? `<span class="note">${esc(m.note)}</span>` : ''}
         </div>
         <div class="chips">
@@ -775,7 +780,12 @@ async function showMembers() {
     <div class="col">
       <div class="card">
         <h2 id="mTitle">メンバー</h2>
-        <input type="text" id="mSearch" placeholder="名前・メモで検索">
+        <div class="row">
+          <input type="text" id="mSearch" placeholder="名前・メモで検索" style="flex:1 1 180px">
+          <select id="mRole" style="flex:0 1 150px;min-width:130px" aria-label="ロールで絞り込み">
+            <option value="*">すべてのロール</option>${ROLES.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('')}<option value="">未設定</option>
+          </select>
+        </div>
         <div id="mList" style="margin-top:10px;overflow-x:auto"><div class="empty">読み込み中…</div></div>
       </div>
     </div>
@@ -783,20 +793,24 @@ async function showMembers() {
   </div>`;
   const render = () => {
     if (!$('#mList')) return;
-    $('#mTitle').textContent = `メンバー（${MEMBERS.length}名）`;
     const q = $('#mSearch').value.trim();
+    const role = $('#mRole').value;
     const byMember = {};
     for (const r of RECORDS_ALL || []) (byMember[r.memberId] ||= []).push(r);
-    const rows = MEMBERS.filter(m => !q || m.name.includes(q) || (m.note || '').includes(q))
+    const hits = MEMBERS.filter(m => (!q || m.name.includes(q) || (m.note || '').includes(q))
+      && (role === '*' || validRole(m.role) === role));
+    $('#mTitle').textContent = hits.length === MEMBERS.length ? `メンバー（${MEMBERS.length}名）` : `メンバー（${hits.length} / ${MEMBERS.length}名）`;
+    const rows = hits
       .map(m => ({ m, st: memberStats(byMember[m.id] || []) }))
       .sort((a, b) => b.st.wins - a.st.wins || b.st.count - a.st.count || a.m.name.localeCompare(b.m.name, 'ja'));
-    $('#mList').innerHTML = !MEMBERS.length ? '<div class="empty">まだメンバーが登録されていません</div>' : `
+    $('#mList').innerHTML = !MEMBERS.length ? '<div class="empty">まだメンバーが登録されていません</div>'
+      : !rows.length ? '<div class="empty">条件に合うメンバーがいません</div>' : `
       <table class="tbl">
-        <thead><tr><th>名前</th><th>メモ</th><th style="text-align:right">出場</th><th style="text-align:right">優勝</th>
+        <thead><tr><th>名前</th><th>ロール</th><th>メモ</th><th style="text-align:right">出場</th><th style="text-align:right">優勝</th>
           <th style="text-align:right">最高</th><th style="text-align:right">平均</th></tr></thead>
         <tbody>${rows.map(({ m, st }) => `
           <tr class="link" data-mid="${esc(m.id)}">
-            <td><b>${esc(m.name)}</b></td><td class="hint">${esc(m.note || '')}</td>
+            <td><b>${esc(m.name)}</b></td><td>${roleBadge(m.role) || '<span class="hint">—</span>'}</td><td class="hint">${esc(m.note || '')}</td>
             <td class="n">${RECORDS_ALL ? st.count : '…'}</td>
             <td class="n" style="${st.wins ? 'color:var(--gold);font-weight:700' : ''}">${RECORDS_ALL ? st.wins : '…'}</td>
             <td class="n">${st.best ? rankLabel(st.best) : '—'}</td>
@@ -817,13 +831,18 @@ async function showMembers() {
     card.innerHTML = `
       <h2>メンバーを追加</h2>
       <label for="nmName">名前</label><input type="text" id="nmName" maxlength="40">
+      <label for="nmRole">ロール</label><select id="nmRole">${roleOptions('')}</select>
       <label for="nmNote">メモ（所属など・任意）</label><input type="text" id="nmNote" maxlength="200">
       <button class="primary wide" id="nmAdd" style="margin-top:10px">追加</button>
       <h3 style="margin-top:18px">まとめて追加</h3>
       <textarea id="nmBulk" style="height:100px" placeholder="山田&#10;佐藤&#10;鈴木（改行または「、」区切り）"></textarea>
+      <label for="nmBulkRole">ロール（まとめて追加する全員に設定）</label><select id="nmBulkRole">${roleOptions('')}</select>
       <button class="wide" id="nmBulkAdd" style="margin-top:6px">まとめて追加</button>
       <div class="err" id="nmErr"></div>
-      <p class="hint">過去の戦績は、各メンバーのページから入力できます。</p>`;
+      <p class="hint">過去の戦績は、各メンバーのページから入力できます。</p>
+      <h3 style="margin-top:18px">メモからロールを一括設定</h3>
+      <p class="hint">ロール未設定のメンバーについて、メモの内容からロールを設定します。メモがロール名だけ（例「OB」）の場合はメモを空にし、ロール名を含む場合（例「OB（2019年卒）」）はメモを残します。設定済みのロールは変更しません。</p>
+      <button class="wide" id="nmMigrate" style="margin-top:6px">メモからロールを設定</button>`;
     const exists = n => MEMBERS.some(m => m.name === n);
     $('#nmAdd').onclick = async () => {
       $('#nmErr').textContent = '';
@@ -831,7 +850,7 @@ async function showMembers() {
       if (!name) return ($('#nmErr').textContent = '名前を入力してください');
       if (exists(name)) return ($('#nmErr').textContent = '同じ名前のメンバーがいます');
       try {
-        await backend.saveMember({ name, note: cleanName($('#nmNote').value, 200) });
+        await backend.saveMember({ name, note: cleanName($('#nmNote').value, 200), role: validRole($('#nmRole').value) });
         $('#nmName').value = ''; $('#nmNote').value = ''; toast(`${name} を追加しました`);
       } catch (e) { $('#nmErr').textContent = errMsg(e); }
     };
@@ -839,11 +858,29 @@ async function showMembers() {
       $('#nmErr').textContent = '';
       const names = splitNames($('#nmBulk').value).filter(n => !exists(n));
       if (!names.length) return ($('#nmErr').textContent = '追加する名前がありません（登録済みの名前は除外されます）');
-      try { await backend.createMembers(names); $('#nmBulk').value = ''; toast(`${names.length}名を追加しました`); }
+      try { await backend.createMembers(names, validRole($('#nmBulkRole').value)); $('#nmBulk').value = ''; toast(`${names.length}名を追加しました`); }
       catch (e) { $('#nmErr').textContent = errMsg(e); }
+    };
+    $('#nmMigrate').onclick = async () => {
+      $('#nmErr').textContent = '';
+      const changes = MEMBERS.filter(m => !validRole(m.role))
+        .map(m => ({ m, r: roleFromNote(m.note) })).filter(x => x.r);
+      if (!changes.length) return ($('#nmErr').textContent = 'メモからロールを設定できるメンバーはいません');
+      const count = {};
+      for (const { r } of changes) count[r.role] = (count[r.role] || 0) + 1;
+      const summary = ROLES.filter(r => count[r]).map(r => `${r}：${count[r]}名`).join('\n');
+      const cleared = changes.filter(x => x.r.note === '').length;
+      if (!confirm(`${changes.length}名にロールを設定します。\n\n${summary}\n\nうち ${cleared}名はメモがロール名だけのため、メモを空にします。よろしいですか？`)) return;
+      const btn = $('#nmMigrate'); btn.disabled = true;
+      try {
+        await backend.saveMembers(changes.map(({ m, r }) => ({ ...m, role: r.role, note: r.note })));
+        toast(`${changes.length}名にロールを設定しました`);
+      } catch (e) { $('#nmErr').textContent = errMsg(e); }
+      btn.disabled = false;
     };
   };
   $('#mSearch').oninput = render;
+  $('#mRole').onchange = render;
   render(); renderAdd();
   pageRefresh = () => { render(); renderAdd(); };
   try { RECORDS_ALL = await backend.getRecords(); } catch (e) { toast(errMsg(e)); RECORDS_ALL = []; }
@@ -875,7 +912,7 @@ async function showMember(mid) {
     }
     const st = memberStats(recs || []);
     $('#mHead').innerHTML = `
-      <div class="big">${esc(m.name)}</div>
+      <div class="big">${esc(m.name)}${roleBadge(m.role)}</div>
       ${m.note ? `<div class="hint">${esc(m.note)}</div>` : ''}
       <div class="statGrid">
         <div><b>${recs ? st.count : '…'}</b><span>出場</span></div>
@@ -928,6 +965,7 @@ async function showMember(mid) {
       <div class="card">
         <h2>メンバー情報</h2>
         <label for="emName">名前</label><input type="text" id="emName" maxlength="40" value="${esc(m.name)}">
+        <label for="emRole">ロール</label><select id="emRole">${roleOptions(validRole(m.role))}</select>
         <label for="emNote">メモ</label><input type="text" id="emNote" maxlength="200" value="${esc(m.note || '')}">
         <button class="wide" id="emSave" style="margin-top:10px">保存</button>
         <button class="wide danger" id="emDel" style="margin-top:6px">このメンバーを削除</button>
@@ -959,7 +997,7 @@ async function showMember(mid) {
       const name = cleanName($('#emName').value, 40);
       if (!name) return ($('#emErr').textContent = '名前を入力してください');
       if (MEMBERS.some(x => x.name === name && x.id !== mid)) return ($('#emErr').textContent = '同じ名前のメンバーがいます');
-      try { await backend.saveMember({ id: mid, name, note: cleanName($('#emNote').value, 200), createdAt: m.createdAt }); toast('保存しました'); }
+      try { await backend.saveMember({ id: mid, name, note: cleanName($('#emNote').value, 200), role: validRole($('#emRole').value), createdAt: m.createdAt }); toast('保存しました'); }
       catch (e) { $('#emErr').textContent = errMsg(e); }
     };
     $('#emDel').onclick = async () => {
