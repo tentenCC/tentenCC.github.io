@@ -385,11 +385,17 @@ function entryTaken(exceptId) {
 // エントリー受付中のチーム一覧（オッズ表の代わり）
 function renderEntryBoard() {
   const t = T, list = entryList();
+  // 名簿にいる人は ID、いない人（新規）は名前で持つ
+  const split = pairs => ({
+    mids: pairs.filter(([id]) => id && MEMBER_BY_ID[id]).map(([id]) => id),
+    newNames: pairs.filter(([id]) => !(id && MEMBER_BY_ID[id])).map(([, n]) => n),
+  });
   const rows = [
     ...RAW.t.entrants.map(e => ({ name: e.name, tag: e.tag || '', members: (e.memberIds || []).map(id => esc(memberName(id))),
-      server: e.server || '', message: e.message || '', mine: false })),
+      server: e.server || '', message: e.message || '', mine: false, mids: e.memberIds || [], newNames: [] })),
     ...list.map(x => ({ name: x.teamName, tag: x.teamTag, members: [entryMemberHtml(x.selfId, x.selfName), entryMemberHtml(x.partnerId, x.partnerName)],
-      server: x.server, message: x.message || '', mine: x.id === RAW.uid })),
+      server: x.server, message: x.message || '', mine: x.id === RAW.uid,
+      ...split([[x.selfId, x.selfName], [x.partnerId, x.partnerName]]) })),
   ];
   $('#boardCard').innerHTML = `
     <div class="tHead">
@@ -404,15 +410,19 @@ function renderEntryBoard() {
     <table class="board">
       <thead><tr><th>番</th><th>チーム</th><th>希望サーバー</th><th class="hideSm">意気込み</th></tr></thead>
       <tbody>${rows.map((r, i) => `
-        <tr class="${r.mine ? 'sel' : ''}">
+        <tr class="view ${r.mine ? 'sel' : ''}" data-row="${i}">
           <td><span class="num">${i + 1}</span></td>
-          <td class="ename">${esc(r.name)}${tagChip(r.tag)}${r.mine ? '<span class="info">あなた</span>' : ''}
+          <td class="ename">${esc(r.name)}${tagChip(r.tag)}${r.mine ? '<span class="info">あなた</span>' : ''}<span class="info">メンバー・戦績</span>
             ${r.members.length ? `<span class="members">${r.members.join('、')}</span>` : ''}</td>
           <td style="font-size:13px;white-space:nowrap">${esc(r.server || '—')}</td>
-          <td class="hideSm msg">${esc(r.message)}</td>
+          <td class="hideSm"><div class="msg">${esc(r.message)}</div></td>
         </tr>`).join('')}</tbody>
     </table>` : '<div class="empty">まだエントリーがありません</div>'}
-    <p class="hint">エントリーが締め切られると、各チームが大会に追加されて投票（オッズ）が始まります。</p>`;
+    <p class="hint">チームをクリックすると、メンバーと過去の戦績を確認できます。エントリーが締め切られると、各チームが大会に追加されて投票（オッズ）が始まります。</p>`;
+  $('#boardCard').querySelectorAll('tr[data-row]').forEach(tr => tr.onclick = () => {
+    const r = rows[Number(tr.dataset.row)];
+    showTeamDetail({ name: r.name, tag: r.tag, server: r.server, message: r.message, mids: r.mids, newNames: r.newNames });
+  });
 }
 
 function renderEntry() {
@@ -615,38 +625,53 @@ function renderBoard() {
 }
 
 // チームのメンバー・戦績ポップアップ
-async function openTeamModal(eid) {
+function openTeamModal(eid) {
   const e = T.entrants.find(x => x.id === eid); if (!e) return;
   const ent = RAW.t.entrants.find(x => x.id === eid) || {};
-  const mids = ent.memberIds || [];
-  const canPick = T.status === 'open' && !!T.me;
+  showTeamDetail({
+    name: e.name, tag: ent.tag, server: ent.server, message: ent.message, mids: ent.memberIds || [],
+    chips: `<span class="chip">オッズ ${fmtOdds(e.odds)} 倍</span>
+      ${e.popularity ? `<span class="chip">${e.popularity}番人気</span>` : ''}
+      <span class="chip">投票 ${fmt(e.votes)}pt</span>`,
+    pickId: T.status === 'open' && T.me ? eid : null,
+  });
+}
+
+// チームのメンバー・戦績ポップアップ（オッズ表・エントリー一覧の両方から使う）
+// team: { name, tag, server, message, mids: 名簿のメンバーID, newNames: 名簿未登録の名前, chips: 追加の表示, pickId: 投票先に選べるチームID }
+async function showTeamDetail({ name, tag, server, message, mids = [], newNames = [], chips = '', pickId = null }) {
   const head = `
     <div class="modal-head">
-      <h2>${esc(e.name)}${tagChip(ent.tag)}</h2>
+      <h2>${esc(name)}${tagChip(tag)}</h2>
       <button class="small" data-close>✕</button>
     </div>
     <div class="chips">
-      <span class="chip">オッズ ${fmtOdds(e.odds)} 倍</span>
-      ${e.popularity ? `<span class="chip">${e.popularity}番人気</span>` : ''}
-      <span class="chip">投票 ${fmt(e.votes)}pt</span>
-      <span class="chip">メンバー ${mids.length}人</span>
-      ${ent.server ? `<span class="chip">希望：${esc(ent.server)}</span>` : ''}
+      ${chips}
+      <span class="chip">メンバー ${mids.length + newNames.length}人</span>
+      ${server ? `<span class="chip">希望：${esc(server)}</span>` : ''}
     </div>
-    ${ent.message ? `<div class="mcard"><div class="note">意気込み</div><div class="msg full">${esc(ent.message)}</div></div>` : ''}`;
+    ${message ? `<div class="mcard"><div class="note">意気込み</div><div class="msg full">${esc(message)}</div></div>` : ''}`;
   const foot = `
     <div class="modal-foot">
       <button data-close>閉じる</button>
-      ${canPick ? '<button class="primary" id="pickTeam">このチームに投票する</button>' : ''}
+      ${pickId ? '<button class="primary" id="pickTeam">このチームに投票する</button>' : ''}
     </div>`;
   const bindFoot = () => {
     const b = $('#pickTeam'); if (!b) return;
     b.onclick = () => {
-      selected = eid; closeModal(); renderBoard(); updateSelection();
+      selected = pickId; closeModal(); renderBoard(); updateSelection();
       $('#betCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
       const a = $('#amount'); if (a) a.focus();
     };
   };
+  // 名簿未登録（エントリーで新規追加された人）は戦績なし
+  const newCards = newNames.map(n => `
+      <div class="mcard">
+        <div class="top"><span class="nm">${esc(n)}</span>${newTag}<span class="note">メンバー一覧に未登録（エントリー締切時に登録されます）</span></div>
+        <div class="hint">戦績はまだありません</div>
+      </div>`).join('');
   if (!mids.length) {
+    if (newCards) { openModal(head + newCards + foot); return bindFoot(); }
     openModal(head + '<p class="empty">このチームにはメンバーが登録されていません。</p>' + foot);
     return bindFoot();
   }
@@ -680,7 +705,7 @@ async function openTeamModal(eid) {
         : '<div class="hint">戦績はまだありません</div>'}
       </div>`;
   }).join('');
-  openModal(head + cards + foot); bindFoot();
+  openModal(head + cards + newCards + foot); bindFoot();
 }
 const recRow = r => `<tr>
   <td>${esc(r.date || '—')}</td>
