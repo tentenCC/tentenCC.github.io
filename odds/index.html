@@ -113,6 +113,10 @@ nav{display:flex;gap:4px}
 nav a{padding:6px 12px;border-radius:6px;font-size:14px;opacity:.85}
 nav a:hover{background:rgba(255,255,255,.12);opacity:1}
 nav a.on{background:rgba(255,255,255,.2);opacity:1;font-weight:700}
+nav a.ext{border:1px solid rgba(255,255,255,.35);margin-left:4px}
+.makerLink{display:inline-block;margin-top:8px;font-size:13px;font-weight:600;color:var(--primary);text-decoration:none;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:6px;padding:6px 10px}
+.makerLink:hover{background:#dcfce7}
+nav{flex-wrap:wrap}
 .ename .members{display:block;font-size:12px;font-weight:400;color:var(--muted);margin-top:2px}
 .ename .info{font-size:11px;font-weight:600;color:var(--primary);border:1px solid #bbf7d0;border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap}
 .board tr.pick,.board tr.view{cursor:pointer}
@@ -177,6 +181,7 @@ button.pkItem:hover{background:#f0fdf4}
     <a href="#/" data-nav="home">大会</a>
     <a href="#/members" data-nav="members">メンバー</a>
     <a href="#/admin" data-nav="admin" id="navAdmin">管理</a>
+    <a href="../" class="ext" id="navMaker" title="トーナメントメーカーへ移動">🏆 トーナメント表 ↗</a>
   </nav>
 </header>
 <div class="demo" id="demoBar" hidden>デモモード：Firebase が未設定のため、データはこのブラウザ内だけに保存されます（タブごとに別の参加者になります）。</div>

@@ -8,8 +8,10 @@
 :root{--bg:#f4f5f7;--card:#fff;--text:#1f2328;--muted:#6b7280;--line:#d0d5dd;--primary:#2563eb;}
 *{box-sizing:border-box}
 body{margin:0;font-family:"Hiragino Sans","Meiryo","Yu Gothic UI",system-ui,sans-serif;background:var(--bg);color:var(--text)}
-header{background:#1f2937;color:#fff;padding:14px 20px}
-header h1{margin:0;font-size:20px}
+header{background:#1f2937;color:#fff;padding:14px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+header h1{margin:0;font-size:20px;flex:1}
+header .navLink{color:#fff;text-decoration:none;font-size:14px;padding:6px 12px;border-radius:6px;border:1px solid rgba(255,255,255,.35);opacity:.9;white-space:nowrap}
+header .navLink:hover{background:rgba(255,255,255,.12);opacity:1}
 main{display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px;padding:16px;align-items:start}
 @media (max-width:820px){main{grid-template-columns:minmax(0,1fr)}}
 .card{background:var(--card);border-radius:10px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
@@ -73,13 +75,19 @@ button.wide{width:100%}
 .lib .date{font-size:11px;color:var(--muted)}
 .lib button{font-size:12px;padding:4px 8px}
 .lib .none{font-size:13px;color:var(--muted);padding:6px 0}
+.oddsOpen{display:block;margin-top:8px;font-size:13px;color:var(--primary);text-decoration:none}
+.oddsOpen[hidden]{display:none}
+.oddsOpen:hover{text-decoration:underline}
 select.sel{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font:inherit;font-size:14px;background:#fff}
 .legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:8px;flex-wrap:wrap}
 .legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:-2px;border:2px solid var(--c);background:var(--f)}
 </style>
 </head>
 <body>
-<header><h1>🏆 トーナメントメーカー</h1></header>
+<header>
+  <h1>🏆 トーナメントメーカー</h1>
+  <a href="odds/" class="navLink" id="navOdds" title="大会オッズへ移動">🎯 大会オッズ ↗</a>
+</header>
 <main>
   <div class="side">
   <section class="card">
@@ -93,6 +101,7 @@ select.sel{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px
       <option value="members">チーム名（メンバー）</option>
     </select>
     <button class="wide" id="oddsLoad" style="margin-top:10px">⬇ 参加者欄に読み込む</button>
+    <a id="oddsOpen" class="oddsOpen" href="odds/" hidden>🎯 この大会のページを大会オッズで開く ↗</a>
     <div class="count" id="oddsMsg">エントリーされたチーム（エントリー受付中の大会はその時点のエントリー）を参加者欄に入れます。</div>
   </section>
 
@@ -830,6 +839,18 @@ async function oddsApi() {
 }
 const STATUS = { entry: 'エントリー受付中', open: '投票受付中', closed: '締切', settled: '確定' };
 const msg = t => { byId('oddsMsg').textContent = t; };
+// 大会オッズから「この大会で作る」で来た場合は ?odds=大会ID
+const preselect = new URLSearchParams(location.search).get('odds') || '';
+// 大会オッズへのリンク（大会を選んでいればその大会のページへ。デモモードは引き継ぐ）
+function updateOddsLinks() {
+  const id = byId('oddsSel').value;
+  const url = 'odds/' + (demo ? '?demo=1' : '') + (id ? '#/t/' + encodeURIComponent(id) : '');
+  byId('navOdds').href = url;
+  byId('navOdds').textContent = id ? '🎯 この大会を大会オッズで開く ↗' : '🎯 大会オッズ ↗';
+  byId('oddsOpen').href = url;
+  byId('oddsOpen').hidden = !id;
+}
+byId('oddsSel').addEventListener('change', updateOddsLinks);
 
 async function loadList() {
   const sel = byId('oddsSel');
@@ -841,10 +862,15 @@ async function loadList() {
       return o.outerHTML;
     }).join('');
     if (!list.length) sel.innerHTML = '<option value="">大会がありません</option>';
+    if (preselect && list.some(t => t.id === preselect)) {
+      sel.value = preselect;
+      msg('大会オッズで開いていた大会を選びました。「参加者欄に読み込む」を押してください。');
+    }
   } catch (e) {
     console.error(e);
     sel.innerHTML = '<option value="">大会一覧を読み込めませんでした</option>';
   }
+  updateOddsLinks();
 }
 
 byId('oddsLoad').onclick = async () => {

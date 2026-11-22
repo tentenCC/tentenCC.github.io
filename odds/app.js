@@ -172,7 +172,18 @@ function route() {
   else if (h.startsWith('#/admin')) { nav = 'admin'; showSiteAdmin(); }
   else showHome();
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('on', a.dataset.nav === nav));
+  // 大会ページを開いているときは、その大会を選んだ状態でトーナメントメーカーを開く
+  const tm = h.match(/^#\/t\/([A-Za-z0-9]+)/);
+  $('#navMaker').href = makerUrl(tm ? tm[1] : null);
   window.scrollTo(0, 0);
+}
+// トーナメントメーカー（サイトのトップ）の URL。デモモードはそのまま引き継ぐ
+function makerUrl(tournamentId) {
+  const q = new URLSearchParams();
+  if (forceDemo) q.set('demo', '1');
+  if (tournamentId) q.set('odds', tournamentId);
+  const s = q.toString();
+  return '../' + (s ? '?' + s : '');
 }
 window.addEventListener('hashchange', route);
 
@@ -382,6 +393,9 @@ function entryTaken(exceptId) {
   return { ids, names, teamNames, tags };
 }
 
+// この大会のチームでトーナメント表を作るリンク
+const makerLink = () => `<a class="makerLink" href="${esc(makerUrl(tid))}">🏆 この大会のチームでトーナメント表を作る ↗</a>`;
+
 // エントリーのメンバーを、名簿にいる人は ID、いない人（新規）は名前に分ける
 function entryMembers(x) {
   const pairs = [[x.selfId, x.selfName], [x.partnerId, x.partnerName]];
@@ -424,7 +438,8 @@ function renderEntryBoard() {
           <td class="hideSm"><div class="msg">${esc(r.message)}</div></td>
         </tr>`).join('')}</tbody>
     </table>` : '<div class="empty">まだエントリーがありません</div>'}
-    <p class="hint">チームをクリックすると、メンバーと過去の戦績を確認できます。エントリーが締め切られると、各チームが大会に追加されて投票（オッズ）が始まります。</p>`;
+    <p class="hint">チームをクリックすると、メンバーと過去の戦績を確認できます。エントリーが締め切られると、各チームが大会に追加されて投票（オッズ）が始まります。</p>
+    ${makerLink()}`;
   $('#boardCard').querySelectorAll('tr[data-row]').forEach(tr => tr.onclick = () => {
     const r = rows[Number(tr.dataset.row)];
     showTeamDetail({ name: r.name, tag: r.tag, server: r.server, message: r.message, mids: r.mids, newNames: r.newNames });
@@ -620,7 +635,8 @@ function renderBoard() {
       </tbody>
     </table>
     <p class="hint">チームをクリックすると、メンバーと過去の戦績を確認できます${canPick ? '（そこから投票先に選べます）' : ''}。オッズはリアルタイムに更新されます。</p>
-    ${t.status === 'open' && !t.me ? '<p class="hint">投票するには参加登録してください。</p>' : ''}`;
+    ${t.status === 'open' && !t.me ? '<p class="hint">投票するには参加登録してください。</p>' : ''}
+    ${makerLink()}`;
   $('#boardCard').querySelectorAll('tr[data-id]').forEach(tr => tr.onclick = () => openTeamModal(tr.dataset.id));
   // 同じ列をもう一度クリックすると逆順
   $('#boardCard').querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => {
