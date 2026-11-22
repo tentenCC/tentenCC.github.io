@@ -3,6 +3,7 @@ import { firebaseConfig } from './firebase-config.js';
 import {
   UNIT, calcOdds, buildView, computeSettlement, splitNames,
   rankLabel, memberStats, sortRecords, buildRecords, ROLES, validRole, roleFromNote,
+  TEAM_TAGS, SERVERS, randomHex,
 } from './common.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -10,7 +11,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const fmt = n => Number(n).toLocaleString('ja-JP');
 const fmtOdds = o => o == null ? '—' : o.toFixed(1);
 const fmtAvg = a => a == null ? '—' : a.toFixed(1) + '位';
-const STATUS = { open: '投票受付中', closed: '締切', settled: '確定' };
+const STATUS = { entry: 'エントリー受付中', open: '投票受付中', closed: '締切', settled: '確定' };
 const cleanName = (s, max) => String(s ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, max);
 const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 
@@ -51,6 +52,7 @@ let MEMBERS = [];
 let MEMBER_BY_ID = {};
 let pageRefresh = () => {};   // サイト状態・名簿が変わったときに今のページを更新する関数
 let activePickers = [];       // 名簿の更新時に表示を更新するメンバー選択部品
+let entryPickers = [];        // エントリーフォームのメンバー選択部品
 
 backend.watchSite(s => {
   SITE = s;
@@ -60,7 +62,7 @@ backend.watchSite(s => {
 backend.watchMembers(list => {
   MEMBERS = list.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
   MEMBER_BY_ID = Object.fromEntries(list.map(m => [m.id, m]));
-  activePickers.forEach(p => p.refresh());
+  [...activePickers, ...entryPickers].forEach(p => p.refresh());
   pageRefresh();
 }, e => console.error(e));
 
@@ -75,12 +77,13 @@ const roleOptions = (cur, emptyLabel = '未設定') =>
 // 名簿から検索して選ぶ。選択は {id}（登録済み）または {name}（新規登録予定）
 // opts.takenBy(): { memberId: '登録先チーム名' }（他チームに入っているメンバーは選べない）
 // opts.allowNew: 名簿にない名前を新規メンバーとして追加できるか
-function createPicker(el, { initial = [], takenBy = () => ({}), allowNew = false, onChange = () => {} } = {}) {
-  let items = initial.map(id => ({ id }));
+// opts.max: 選べる人数の上限（1 なら 1 人だけ選ぶ欄になる）
+function createPicker(el, { initial = [], takenBy = () => ({}), allowNew = false, onChange = () => {}, max = Infinity, placeholder = '名前で検索してメンバーを追加' } = {}) {
+  let items = initial.map(it => typeof it === 'string' ? { id: it } : it);
   el.classList.add('picker');
   el.innerHTML = `
     <div class="pkSel"></div>
-    <input type="text" class="pkIn" placeholder="名前で検索してメンバーを追加">
+    <input type="text" class="pkIn" placeholder="${esc(placeholder)}">
     <div class="pkList" hidden></div>`;
   const sel = $('.pkSel', el), inp = $('.pkIn', el), list = $('.pkList', el);
   const label = it => it.id ? memberName(it.id) : it.name;
@@ -91,8 +94,13 @@ function createPicker(el, { initial = [], takenBy = () => ({}), allowNew = false
         <button type="button" data-rm="${i}" aria-label="${esc(label(it))} を外す">×</button></span>`).join('')
       : '<span class="hint">メンバー未選択</span>';
     sel.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { items.splice(Number(b.dataset.rm), 1); renderSel(); onChange(); });
+    inp.hidden = items.length >= max;
   };
-  const add = it => { if (!has(it)) items.push(it); inp.value = ''; renderSel(); renderList(); onChange(); inp.focus(); };
+  const add = it => {
+    if (!has(it)) items.push(it);
+    inp.value = ''; renderSel(); onChange();
+    if (items.length >= max) { list.hidden = true; inp.blur(); } else { renderList(); inp.focus(); }
+  };
   const renderList = () => {
     const q = inp.value.trim();
     const taken = takenBy();
@@ -124,7 +132,7 @@ function createPicker(el, { initial = [], takenBy = () => ({}), allowNew = false
   return {
     items: () => items.slice(),
     ids: () => items.filter(x => x.id).map(x => x.id),
-    set(ids) { items = ids.map(id => ({ id })); renderSel(); },
+    set(ids) { items = ids.map(it => typeof it === 'string' ? { id: it } : it); renderSel(); },
     refresh() { renderSel(); if (!list.hidden) renderList(); },
   };
 }
@@ -154,7 +162,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal
 // ---------- ルーティング ----------
 let unwatch = () => {};
 function route() {
-  unwatch(); unwatch = () => {}; pageRefresh = () => {}; activePickers = [];
+  unwatch(); unwatch = () => {}; pageRefresh = () => {}; activePickers = []; entryPickers = [];
   closeModal();
   const h = location.hash;
   let m, nav = 'home';
@@ -177,6 +185,7 @@ function showHome() {
       <div class="card">
         <h2>しくみ</h2>
         <p class="hint" style="font-size:13px">
+          エントリー形式の大会では、出場する人が大会ページから「自分・相方・チーム名」などを入力してエントリーします。エントリーが締め切られると、各チームが大会に追加されて投票が始まります。<br>
           参加者は持ちポイントを使って「優勝すると思うチーム」に投票します（${UNIT}pt 単位）。<br>
           オッズは競馬の単勝と同じ<b>パリミュチュエル方式</b>で、投票が集まるたびにリアルタイムに変動します。<br>
           <b>オッズ ＝ 総投票額 ×（1 − 控除率）÷ そのチームへの投票額</b>（0.1 倍未満切り捨て・最低 1.0 倍）<br>
@@ -202,10 +211,18 @@ function showHome() {
         <input type="text" id="cName" maxlength="60" placeholder="例：社内ボウリング大会 2026" required>
         <label for="cDate">開催日</label>
         <input type="date" id="cDate" value="${today()}">
-        <label>出場チームとメンバー</label>
-        <div id="teamRows"></div>
-        <button type="button" class="wide" id="addTeamRow" style="margin-top:8px">＋ チームを追加</button>
-        <p class="hint">メンバーは名簿から検索して選びます。名簿にない人は、検索欄に名前を入れて「新しいメンバーとして追加」を選ぶと、大会作成時に名簿にも登録されます。</p>
+        <label>出場チームの集め方</label>
+        <label class="row" style="font-weight:400;gap:6px;flex-wrap:nowrap;margin:4px 0"><input type="radio" name="cMode" value="entry" checked style="flex:0">
+          <span>エントリー形式（参加者が大会ページから自分でエントリー）</span></label>
+        <label class="row" style="font-weight:400;gap:6px;flex-wrap:nowrap;margin:4px 0"><input type="radio" name="cMode" value="manual" style="flex:0">
+          <span>管理者がチームを入力</span></label>
+        <p class="hint" id="cEntryHint">大会を作成すると「エントリー受付中」になります。締め切るとエントリーがチームとして大会に追加され、投票が始まります。</p>
+        <div id="cTeams" hidden>
+          <label>出場チームとメンバー</label>
+          <div id="teamRows"></div>
+          <button type="button" class="wide" id="addTeamRow" style="margin-top:8px">＋ チームを追加</button>
+          <p class="hint">メンバーは名簿から検索して選びます。名簿にない人は、検索欄に名前を入れて「新しいメンバーとして追加」を選ぶと、大会作成時に名簿にも登録されます。</p>
+        </div>
         <div class="row">
           <div><label for="cPoints">初期ポイント</label><input type="number" id="cPoints" value="1000" min="100" step="100"></div>
           <div><label for="cTake">控除率（%）</label><input type="number" id="cTake" value="0" min="0" max="50" step="1"></div>
@@ -249,17 +266,23 @@ function showHome() {
     };
     addRow(); addRow();
     $('#addTeamRow').onclick = () => { addRow().nameEl.focus(); };
+    const mode = () => document.querySelector('input[name="cMode"]:checked').value;
+    document.querySelectorAll('input[name="cMode"]').forEach(r => r.onchange = () => {
+      $('#cTeams').hidden = mode() !== 'manual';
+      $('#cEntryHint').hidden = mode() !== 'entry';
+    });
 
     $('#createForm').onsubmit = async ev => {
       ev.preventDefault(); $('#cErr').textContent = '';
       const name = cleanName($('#cName').value, 60);
-      const teams = rows.map(r => ({ name: cleanName(r.nameEl.value, 40), picker: r.picker }));
+      const isEntry = mode() === 'entry';
+      const teams = isEntry ? [] : rows.map(r => ({ name: cleanName(r.nameEl.value, 40), picker: r.picker }));
       if (teams.some(t => !t.name)) return ($('#cErr').textContent = 'チーム名を入力してください');
       const initialPoints = Math.floor(Number($('#cPoints').value));
       const takeout = Math.round(Number($('#cTake').value)) / 100;
       const fail = msg => { $('#cErr').textContent = msg; };
       if (!name) return fail('大会名を入力してください');
-      if (teams.length < 2) return fail('チームは 2 つ以上必要です');
+      if (!isEntry && teams.length < 2) return fail('チームは 2 つ以上必要です');
       if (teams.length > 200) return fail('チームは 200 までです');
       if (new Set(teams.map(t => t.name)).size !== teams.length) return fail('同じ名前のチームがあります');
       if (!(initialPoints >= UNIT && initialPoints <= 1e7)) return fail(`初期ポイントは ${UNIT}〜10,000,000 で指定してください`);
@@ -268,7 +291,7 @@ function showHome() {
       try {
         const idLists = await commitPickers(teams.map(t => t.picker));
         const withIds = teams.map((t, i) => ({ name: t.name, memberIds: idLists[i] }));
-        const r = await backend.createTournament({ name, date: $('#cDate').value || '', teams: withIds, initialPoints, takeout });
+        const r = await backend.createTournament({ name, date: $('#cDate').value || '', teams: withIds, initialPoints, takeout, status: isEntry ? 'entry' : 'open' });
         justCreated = r.id;
         location.hash = '#/t/' + r.id;
       } catch (e) { fail(errMsg(e)); if (btn) btn.disabled = false; }
@@ -281,7 +304,7 @@ function showHome() {
     el.innerHTML = list.length ? list.map(t => `
       <li>
         <a href="#/t/${esc(t.id)}">${esc(t.name)}</a>
-        <span class="meta">${t.date ? esc(t.date) + ' ／ ' : ''}${t.entrants.length} チーム</span>
+        <span class="meta">${t.date ? esc(t.date) : ''}${t.status === 'entry' ? '' : `${t.date ? ' ／ ' : ''}${t.entrants.length} チーム`}</span>
         <span class="badge ${esc(t.status)}">${STATUS[t.status] || ''}</span>
       </li>`).join('') : '<li class="empty">まだ大会がありません。</li>';
   }, e => { const el = $('#tList'); if (el) el.innerHTML = `<li class="empty">${esc(errMsg(e))}</li>`; });
@@ -298,14 +321,15 @@ let adminSig = '';     // 管理者メニューの再描画判定用
 let boardSort = { key: 'num', dir: 1 };
 
 function showTournament(id) {
-  tid = id; RAW = null; T = null; selected = null; adminSig = ''; betFormBuilt = false;
+  tid = id; RAW = null; T = null; selected = null; adminSig = ''; betFormBuilt = false; entrySig = ''; entryEditing = false;
   $('#app').innerHTML = `
   <div class="grid">
     <div class="col">
       <div class="card" id="boardCard"><div class="empty">読み込み中…</div></div>
-      <div class="card"><h2>ポイントランキング</h2><div id="ranking"></div></div>
+      <div class="card" id="rankingCard"><h2>ポイントランキング</h2><div id="ranking"></div></div>
     </div>
     <div class="col">
+      <div class="card" id="entryCard" hidden></div>
       <div class="card" id="betCard"></div>
       <div class="card" id="myBetsCard" hidden><h2>あなたの投票</h2><ul class="list mybets" id="myBets"></ul></div>
       <div class="card adminBox" id="adminCard" hidden></div>
@@ -327,10 +351,189 @@ function showTournament(id) {
 
 function renderAll() {
   if (!$('#boardCard')) return;
-  renderBoard(); renderBet(); renderMyBets(); renderRanking(); renderAdmin(); renderAdminLogin();
+  $('#rankingCard').hidden = T.status === 'entry';
+  renderBoard(); renderEntry(); renderBet(); renderMyBets(); renderRanking(); renderAdmin(); renderAdminLogin();
+}
+
+// ---------- エントリー ----------
+let entrySig = '';       // エントリー欄の再描画判定用
+let entryEditing = false;
+const entryList = () => RAW.t.status === 'entry'
+  ? [...(RAW.entries || [])].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)) : [];
+const newTag = '<small class="newTag">新規</small>';
+const entryMemberHtml = (id, name) => id && MEMBER_BY_ID[id] ? esc(MEMBER_BY_ID[id].name) : esc(name) + (id ? '' : newTag);
+const tagChip = tag => tag ? `<span class="tagChip">${esc(tag)}</span>` : '';
+// 他チーム（管理者が追加したチーム＋他の人のエントリー）で使われているメンバー・チーム名・タグ
+function entryTaken(exceptId) {
+  const ids = {}, names = {}, teamNames = new Set(), tags = {};
+  for (const e of RAW.t.entrants) {
+    for (const id of e.memberIds || []) ids[id] = e.name;
+    teamNames.add(e.name);
+    if (e.tag) tags[e.tag] = e.name;
+  }
+  for (const x of RAW.entries || []) {
+    if (x.id === exceptId) continue;
+    for (const [id, nm] of [[x.selfId, x.selfName], [x.partnerId, x.partnerName]]) {
+      if (id) ids[id] = x.teamName; else names[nm] = x.teamName;
+    }
+    teamNames.add(x.teamName);
+    tags[x.teamTag] = x.teamName;
+  }
+  return { ids, names, teamNames, tags };
+}
+
+// エントリー受付中のチーム一覧（オッズ表の代わり）
+function renderEntryBoard() {
+  const t = T, list = entryList();
+  const rows = [
+    ...RAW.t.entrants.map(e => ({ name: e.name, tag: e.tag || '', members: (e.memberIds || []).map(id => esc(memberName(id))),
+      server: e.server || '', message: e.message || '', mine: false })),
+    ...list.map(x => ({ name: x.teamName, tag: x.teamTag, members: [entryMemberHtml(x.selfId, x.selfName), entryMemberHtml(x.partnerId, x.partnerName)],
+      server: x.server, message: x.message || '', mine: x.id === RAW.uid })),
+  ];
+  $('#boardCard').innerHTML = `
+    <div class="tHead">
+      <h2>${esc(t.name)}</h2>
+      <span class="badge entry">${STATUS.entry}</span>
+    </div>
+    <div class="stats">
+      ${RAW.t.date ? `<span>開催日 <b>${esc(RAW.t.date)}</b></span>` : ''}
+      <span>エントリー <b>${rows.length}</b> チーム</span>
+    </div>
+    ${rows.length ? `
+    <table class="board">
+      <thead><tr><th>番</th><th>チーム</th><th>希望サーバー</th><th class="hideSm">意気込み</th></tr></thead>
+      <tbody>${rows.map((r, i) => `
+        <tr class="${r.mine ? 'sel' : ''}">
+          <td><span class="num">${i + 1}</span></td>
+          <td class="ename">${esc(r.name)}${tagChip(r.tag)}${r.mine ? '<span class="info">あなた</span>' : ''}
+            ${r.members.length ? `<span class="members">${r.members.join('、')}</span>` : ''}</td>
+          <td style="font-size:13px;white-space:nowrap">${esc(r.server || '—')}</td>
+          <td class="hideSm msg">${esc(r.message)}</td>
+        </tr>`).join('')}</tbody>
+    </table>` : '<div class="empty">まだエントリーがありません</div>'}
+    <p class="hint">エントリーが締め切られると、各チームが大会に追加されて投票（オッズ）が始まります。</p>`;
+}
+
+function renderEntry() {
+  const card = $('#entryCard');
+  if (T.status !== 'entry') { card.hidden = true; card.innerHTML = ''; entrySig = ''; entryEditing = false; entryPickers = []; return; }
+  card.hidden = false;
+  const mine = (RAW.entries || []).find(x => x.id === RAW.uid) || null;
+  const mode = mine && !entryEditing ? 'view' : 'form';
+  const sig = JSON.stringify([mode, mine]);
+  if (sig === entrySig) { if (mode === 'form') refreshTagOptions(); return; }
+  entrySig = sig;
+  entryPickers = [];
+
+  if (mode === 'view') {
+    card.innerHTML = `
+      <h2>✅ エントリー済み</h2>
+      <table class="rec" style="font-size:14px">
+        <tr><th>チーム名</th><td><b>${esc(mine.teamName)}</b>${tagChip(mine.teamTag)}</td></tr>
+        <tr><th>あなた</th><td>${entryMemberHtml(mine.selfId, mine.selfName)}</td></tr>
+        <tr><th>相方</th><td>${entryMemberHtml(mine.partnerId, mine.partnerName)}</td></tr>
+        <tr><th>希望サーバー</th><td>${esc(mine.server)}</td></tr>
+        <tr><th>意気込み</th><td class="msg full">${esc(mine.message || '—')}</td></tr>
+      </table>
+      <div class="row" style="margin-top:10px">
+        <button id="enEdit">内容を変更</button>
+        <button class="danger" id="enCancel">エントリーを取り消す</button>
+      </div>
+      <div class="err" id="enErr"></div>
+      <p class="hint">エントリーはこのブラウザに紐づいています。変更・取り消しはエントリーした端末から行ってください。</p>`;
+    $('#enEdit').onclick = () => { entryEditing = true; renderEntry(); };
+    $('#enCancel').onclick = async () => {
+      if (!confirm(`チーム「${mine.teamName}」のエントリーを取り消します。よろしいですか？`)) return;
+      try { await backend.deleteEntry(tid); toast('エントリーを取り消しました'); }
+      catch (e) { $('#enErr').textContent = errMsg(e); }
+    };
+    return;
+  }
+
+  const m = mine || {};
+  card.innerHTML = `
+    <h2>📝 ${mine ? 'エントリー内容の変更' : 'エントリー'}</h2>
+    <form id="entryForm">
+      <label>貴方は誰ですか？</label>
+      <div id="enSelf"></div>
+      <label>相方は誰ですか？</label>
+      <div id="enPartner"></div>
+      <p class="hint">メンバー一覧から名前で検索して選びます。見つからない場合は、名前を入力して「新しいメンバーとして追加」を選んでください。</p>
+      <label for="enTeam">チーム名を教えてください</label>
+      <input type="text" id="enTeam" maxlength="40" value="${esc(m.teamName || '')}">
+      <label for="enTag">チームタグを教えてください（サーバー内で付与されている「チーム〇」）</label>
+      <select id="enTag"></select>
+      <label>希望するサーバーを教えてください</label>
+      ${SERVERS.map(s => `<label class="row" style="font-weight:400;gap:6px;flex-wrap:nowrap;margin:4px 0">
+        <input type="radio" name="enServer" value="${esc(s)}" style="flex:0"${m.server === s ? ' checked' : ''}><span>${esc(s)}</span></label>`).join('')}
+      <label for="enMsg">意気込みをどうぞ</label>
+      <textarea id="enMsg" maxlength="500" style="height:100px">${esc(m.message || '')}</textarea>
+      <button class="primary wide" style="margin-top:10px">${mine ? '変更を保存する' : 'エントリーする'}</button>
+      ${mine ? '<button type="button" class="wide" id="enBack" style="margin-top:6px">変更をやめる</button>' : ''}
+      <div class="err" id="enErr"></div>
+    </form>`;
+  const initial = (id, name) => id ? [{ id }] : name ? [{ name }] : [];
+  let selfP, partnerP;
+  const takenBy = other => () => {
+    const out = { ...entryTaken(RAW.uid).ids };
+    const o = other(); const it = o && o.items()[0];
+    if (it && it.id) out[it.id] = 'もう一方の欄';
+    return out;
+  };
+  selfP = createPicker($('#enSelf'), { initial: initial(m.selfId, m.selfName), allowNew: true, max: 1,
+    placeholder: '自分の名前で検索', takenBy: takenBy(() => partnerP) });
+  partnerP = createPicker($('#enPartner'), { initial: initial(m.partnerId, m.partnerName), allowNew: true, max: 1,
+    placeholder: '相方の名前で検索', takenBy: takenBy(() => selfP) });
+  entryPickers = [selfP, partnerP];
+  refreshTagOptions(m.teamTag || '');
+  if ($('#enBack')) $('#enBack').onclick = () => { entryEditing = false; renderEntry(); };
+
+  $('#entryForm').onsubmit = async ev => {
+    ev.preventDefault();
+    const fail = msg => { $('#enErr').textContent = msg; };
+    fail('');
+    const s = selfP.items()[0], p = partnerP.items()[0];
+    const teamName = cleanName($('#enTeam').value, 40);
+    const teamTag = $('#enTag').value;
+    const server = (document.querySelector('input[name="enServer"]:checked') || {}).value || '';
+    const message = String($('#enMsg').value).replace(/[\u0000-\u0009\u000b-\u001f]/g, '').trim().slice(0, 500);
+    if (!s) return fail('あなたの名前を選んでください');
+    if (!p) return fail('相方の名前を選んでください');
+    if ((s.id && s.id === p.id) || (!s.id && !p.id && s.name === p.name)) return fail('あなたと相方に同じ人は選べません');
+    if (!teamName) return fail('チーム名を入力してください');
+    if (!TEAM_TAGS.includes(teamTag)) return fail('チームタグを選んでください');
+    if (!SERVERS.includes(server)) return fail('希望するサーバーを選んでください');
+    const taken = entryTaken(RAW.uid);
+    for (const it of [s, p]) {
+      const where = it.id ? taken.ids[it.id] : taken.names[it.name];
+      if (where) return fail(`${it.id ? memberName(it.id) : it.name} さんは既に「${where}」でエントリーしています`);
+    }
+    if (taken.teamNames.has(teamName)) return fail('そのチーム名は既に使われています');
+    if (taken.tags[teamTag]) return fail(`${teamTag} は既に「${taken.tags[teamTag]}」が使っています`);
+    const btn = ev.submitter; if (btn) btn.disabled = true;
+    try {
+      await backend.saveEntry(tid, {
+        selfId: s.id || '', selfName: s.id ? memberName(s.id) : s.name,
+        partnerId: p.id || '', partnerName: p.id ? memberName(p.id) : p.name,
+        teamName, teamTag, server, message, createdAt: m.createdAt || 0,
+      });
+      entryEditing = false;
+      toast(mine ? 'エントリー内容を変更しました' : 'エントリーしました');
+    } catch (e) { fail(errMsg(e)); if (btn) btn.disabled = false; }
+  };
+}
+// チームタグの選択肢（他チームが使っているタグは選べない）。入力中の選択は保つ
+function refreshTagOptions(initial) {
+  const sel = $('#enTag'); if (!sel) return;
+  const cur = initial ?? sel.value;
+  const tags = entryTaken(RAW.uid).tags;
+  sel.innerHTML = '<option value="">選択してください</option>' + TEAM_TAGS.map(tg =>
+    `<option value="${tg}"${tg === cur ? ' selected' : ''}${tags[tg] && tg !== cur ? ' disabled' : ''}>${tg}${tags[tg] ? `（${esc(tags[tg])}）` : ''}</option>`).join('');
 }
 
 function renderBoard() {
+  if (T.status === 'entry') return renderEntryBoard();
   const t = T;
   if (selected && !t.entrants.some(e => e.id === selected)) selected = null;
   const maxVotes = Math.max(1, ...t.entrants.map(e => e.votes));
@@ -339,6 +542,7 @@ function renderBoard() {
   const canPick = t.status === 'open' && !!t.me;
   const ranks = RAW.t.ranks || {};
   const memberIdsOf = id => (RAW.t.entrants.find(e => e.id === id) || {}).memberIds || [];
+  const tagOf = id => (RAW.t.entrants.find(e => e.id === id) || {}).tag || '';
   // 並べ替え（値がないチームは向きに関係なく末尾、同じ値は番号順）
   const settledView = t.status === 'settled';
   if (boardSort.key === 'rank' && !settledView) boardSort = { key: 'pop', dir: 1 };
@@ -386,7 +590,7 @@ function renderBoard() {
         return `
         <tr data-id="${esc(e.id)}" class="${canPick ? 'pick' : 'view'} ${e.id === selected ? 'sel' : ''} ${e.id === t.winnerId ? 'win' : ''}">
           <td><span class="num">${i + 1}</span></td>
-          <td class="ename">${e.id === t.winnerId ? '🏆 ' : ''}${esc(e.name)}<span class="info">メンバー・戦績</span>
+          <td class="ename">${e.id === t.winnerId ? '🏆 ' : ''}${esc(e.name)}${tagChip(tagOf(e.id))}<span class="info">メンバー・戦績</span>
             ${mids.length ? `<span class="members">${mids.map(m => esc(memberName(m))).join('、')}</span>` : ''}</td>
           <td class="odds ${e.odds == null ? 'none' : e.odds === minOdds ? 'fav' : ''}">${fmtOdds(e.odds)}</td>
           ${t.status === 'settled'
@@ -413,11 +617,12 @@ function renderBoard() {
 // チームのメンバー・戦績ポップアップ
 async function openTeamModal(eid) {
   const e = T.entrants.find(x => x.id === eid); if (!e) return;
-  const mids = (RAW.t.entrants.find(x => x.id === eid) || {}).memberIds || [];
+  const ent = RAW.t.entrants.find(x => x.id === eid) || {};
+  const mids = ent.memberIds || [];
   const canPick = T.status === 'open' && !!T.me;
   const head = `
     <div class="modal-head">
-      <h2>${esc(e.name)}</h2>
+      <h2>${esc(e.name)}${tagChip(ent.tag)}</h2>
       <button class="small" data-close>✕</button>
     </div>
     <div class="chips">
@@ -425,7 +630,9 @@ async function openTeamModal(eid) {
       ${e.popularity ? `<span class="chip">${e.popularity}番人気</span>` : ''}
       <span class="chip">投票 ${fmt(e.votes)}pt</span>
       <span class="chip">メンバー ${mids.length}人</span>
-    </div>`;
+      ${ent.server ? `<span class="chip">希望：${esc(ent.server)}</span>` : ''}
+    </div>
+    ${ent.message ? `<div class="mcard"><div class="note">意気込み</div><div class="msg full">${esc(ent.message)}</div></div>` : ''}`;
   const foot = `
     <div class="modal-foot">
       <button data-close>閉じる</button>
@@ -484,6 +691,9 @@ const recRow = r => `<tr>
 let betFormBuilt = false;
 function renderBet() {
   const t = T, card = $('#betCard');
+  // エントリー受付中は投票欄を出さない（締切後に投票が始まる）
+  card.hidden = t.status === 'entry';
+  if (card.hidden) { card.dataset.mode = ''; card.innerHTML = ''; betFormBuilt = false; return; }
   if (!t.me) {
     betFormBuilt = false;
     const mode = t.status === 'settled' ? 'joinClosed' : 'join';
@@ -646,7 +856,7 @@ function renderAdmin() {
   if (!RAW.isAdmin) { card.hidden = true; adminSig = ''; return; }
   card.hidden = false;
   // 入力中の値が消えないよう、状態・チーム構成が変わったときだけ作り直す
-  const sig = JSON.stringify([T.status, RAW.adminKey, RAW.t.entrants, SITE.isSiteAdmin]);
+  const sig = JSON.stringify([T.status, RAW.adminKey, RAW.t.entrants, SITE.isSiteAdmin, T.status === 'entry' ? RAW.entries : null]);
   if (sig === adminSig) return;
   adminSig = sig;
   const url = location.origin + location.pathname + '#/t/' + tid;
@@ -659,16 +869,27 @@ function renderAdmin() {
     <h3>大会の管理者キー（この大会だけを他の人・端末で管理する場合に使用）</h3>
     <div class="keyBox">${esc(RAW.adminKey || '（取得中）')}</div>
     ${t.status === 'settled' ? '<p class="hint" style="margin-top:12px">この大会は確定済みです。戦績の修正はメンバーのページから行えます（サイト管理者）。</p>' : `
+      ${t.status === 'entry' ? `
+      <h3>エントリーの受付（${entryList().length} チーム）</h3>
+      ${entryList().length ? `<table class="rec">
+        <tbody>${entryList().map(x => `<tr>
+          <td><b>${esc(x.teamName)}</b>${tagChip(x.teamTag)}<div class="hint">${entryMemberHtml(x.selfId, x.selfName)}、${entryMemberHtml(x.partnerId, x.partnerName)}</div></td>
+          <td style="text-align:right"><button class="small danger" data-del-entry="${esc(x.id)}">削除</button></td></tr>`).join('')}</tbody>
+      </table>` : '<p class="hint">まだエントリーがありません。</p>'}
+      <button class="primary wide" id="admEntryClose" style="margin-top:8px">エントリーを締め切って投票を開始</button>
+      <p class="hint">締め切ると、各エントリーがチームとして大会に追加され、投票（オッズ）が始まります。名簿にない「新規」の人は、このときメンバー一覧に登録されます。締め切った後はエントリー受付に戻せません。</p>`
+      : `
       <h3>投票の受付</h3>
       ${t.status === 'open'
         ? '<button class="wide" id="admClose">投票を締め切る</button>'
-        : '<button class="wide" id="admOpen">投票を再開する</button>'}
+        : '<button class="wide" id="admOpen">投票を再開する</button>'}`}
       <h3>チームの編集・追加</h3>
       <select id="teamSel"><option value="">＋ 新しいチームを追加</option>${opts}</select>
       <input type="text" id="teamName" maxlength="40" placeholder="チーム名" style="margin-top:6px">
       <div id="teamPick" style="margin-top:6px"></div>
       <button class="wide" id="teamSave" style="margin-top:6px">チームを追加</button>
       <button class="wide danger" id="admRemove" style="margin-top:6px" hidden>このチームを取消（投票は返還）</button>
+      ${t.status === 'entry' ? '' : `
       <h3>結果の確定（順位の入力）</h3>
       <table class="rec" id="rankTable">
         <thead><tr><th>チーム</th><th style="text-align:right">順位</th></tr></thead>
@@ -678,7 +899,7 @@ function renderAdmin() {
       <label class="row" style="font-weight:400;gap:6px;flex-wrap:nowrap"><input type="checkbox" id="recOn" checked style="flex:0">
         <span>メンバーの戦績に記録する</span></label>
       <button class="primary wide" id="admSettle" style="margin-top:6px">順位を確定して払い戻す</button>
-      <p class="hint">1位のチームが優勝として払い戻しの対象になります。初戦敗退などで順位がつかないチームは空欄のままで構いません（戦績には「順位なし」の出場として記録されます）。確定すると取り消せません（受付中の場合は自動で締め切ります）。</p>`}
+      <p class="hint">1位のチームが優勝として払い戻しの対象になります。初戦敗退などで順位がつかないチームは空欄のままで構いません（戦績には「順位なし」の出場として記録されます）。確定すると取り消せません（受付中の場合は自動で締め切ります）。</p>`}`}
     <h3>大会の削除</h3>
     <button class="danger wide" id="admDel">この大会を削除する</button>
     <p class="hint">メンバーの戦績は削除されずに残ります。</p>
@@ -693,6 +914,43 @@ function renderAdmin() {
   const on = (id, f) => { const el = $('#' + id); if (el) el.onclick = f; };
   on('admClose', () => run(() => backend.setStatus(tid, 'closed'), '投票を締め切りました'));
   on('admOpen', () => run(() => backend.setStatus(tid, 'open'), '投票を再開しました'));
+
+  // エントリーの削除・締切
+  card.querySelectorAll('[data-del-entry]').forEach(b => b.onclick = () => {
+    const x = (RAW.entries || []).find(e => e.id === b.dataset.delEntry); if (!x) return;
+    if (!confirm(`チーム「${x.teamName}」のエントリーを削除します。よろしいですか？`)) return;
+    run(() => backend.deleteEntry(tid, x.id), 'エントリーを削除しました');
+  });
+  on('admEntryClose', () => {
+    const list = entryList();
+    const total = RAW.t.entrants.length + list.length;
+    if (total < 2) return ($('#admErr').textContent = 'チームが 2 つ以上必要です（エントリー＋管理者が追加したチーム）');
+    const byName = {};
+    for (const m of MEMBERS) if (!(m.name in byName)) byName[m.name] = m.id;
+    const newNames = [...new Set(list.flatMap(x => [[x.selfId, x.selfName], [x.partnerId, x.partnerName]])
+      .filter(([id]) => !id || !MEMBER_BY_ID[id]).map(([, n]) => n))].filter(n => !(n in byName));
+    if (newNames.length && !SITE.isSiteAdmin)
+      return ($('#admErr').textContent = `名簿にない新規メンバー（${newNames.join('、')}）がいるため、サイト管理者が締め切ってください`);
+    if (!confirm(`エントリーを締め切り、投票を開始します。\n\nチーム数：${total}${newNames.length ? `\n名簿に新しく登録するメンバー：${newNames.join('、')}` : ''}\n\nエントリー受付には戻せません。よろしいですか？`)) return;
+    run(async () => {
+      if (newNames.length) {
+        const ids = await backend.createMembers(newNames);
+        newNames.forEach((n, i) => { byName[n] = ids[i]; });
+      }
+      const used = new Set(RAW.t.entrants.map(e => e.name));
+      const newEntrants = list.map(x => {
+        let name = x.teamName;
+        if (used.has(name)) name = `${name}（${x.teamTag}）`; // 念のため同名チームを避ける
+        used.add(name);
+        const mid = (id, n) => (id && MEMBER_BY_ID[id] ? id : byName[n]);
+        return {
+          id: randomHex(4), name, memberIds: [...new Set([mid(x.selfId, x.selfName), mid(x.partnerId, x.partnerName)].filter(Boolean))],
+          tag: x.teamTag, server: x.server, message: x.message || '', entryUid: x.id,
+        };
+      });
+      await backend.closeEntries(tid, RAW, newEntrants);
+    }, 'エントリーを締め切り、投票を開始しました');
+  });
 
   // チーム編集
   const teamSel = $('#teamSel');
@@ -727,7 +985,7 @@ function renderAdmin() {
   });
   on('admRemove', () => {
     const e = RAW.t.entrants.find(x => x.id === teamSel.value); if (!e) return;
-    if (T.entrants.length <= 2) return ($('#admErr').textContent = 'チームは 2 つ以上必要です');
+    if (T.status !== 'entry' && T.entrants.length <= 2) return ($('#admErr').textContent = 'チームは 2 つ以上必要です');
     if (!confirm(`「${e.name}」を取消します。このチームへの投票は全額返還されます。よろしいですか？`)) return;
     run(() => backend.removeEntrant(tid, RAW, e.id), 'チームを取消しました');
   });

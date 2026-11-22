@@ -25,6 +25,22 @@ service cloud.firestore {
       return signedIn() && !exists(tDoc(tid)) && getAfter(tDoc(tid)).data.ownerUid == request.auth.uid;
     }
 
+    // エントリーの内容。メンバーは名簿の ID（selfId / partnerId）か、名簿にない場合は '' で名前だけ
+    function mDoc(mid) { return /databases/$(database)/documents/members/$(mid); }
+    function validEntry(d) {
+      return d.keys().hasOnly(['selfId', 'selfName', 'partnerId', 'partnerName', 'teamName', 'teamTag',
+               'server', 'message', 'createdAt', 'updatedAt'])
+        && d.selfId is string && d.partnerId is string
+        && (d.selfId == '' || exists(mDoc(d.selfId)))
+        && (d.partnerId == '' || exists(mDoc(d.partnerId)))
+        && validName(d.selfName, 40) && validName(d.partnerName, 40)
+        && validName(d.teamName, 40)
+        && d.teamTag is string && d.teamTag.matches('^チーム[A-Z]$')
+        && d.server in ['アジアサーバー', '日本サーバー', 'どちらでもよい']
+        && d.message is string && d.message.size() <= 500
+        && d.createdAt is number && d.updatedAt is number;
+    }
+
     // 参加者自身によるポイント変更は「投票の作成」または「投票の取消」と同時の場合だけ許可
     function validBetChange(tid, uid) {
       let n = request.resource.data;
@@ -48,7 +64,8 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['name', 'date', 'status', 'takeout', 'initialPoints', 'ownerUid',
              'entrants', 'entrantIds', 'winnerId', 'finalOdds', 'refunded', 'ranks', 'createdAt'])
         && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.status == 'open'
+        // 'entry' = 参加者のエントリー受付から始める大会（チーム 0 件で作成可）
+        && request.resource.data.status in ['open', 'entry']
         && validName(request.resource.data.name, 60)
         && request.resource.data.initialPoints is int
         && request.resource.data.initialPoints >= 100
@@ -57,7 +74,7 @@ service cloud.firestore {
         && request.resource.data.takeout >= 0
         && request.resource.data.takeout <= 0.5
         && request.resource.data.entrantIds is list
-        && request.resource.data.entrantIds.size() >= 2
+        && (request.resource.data.entrantIds.size() >= 2 || request.resource.data.status == 'entry')
         && request.resource.data.entrantIds.size() <= 200
         && request.resource.data.winnerId == null
         && existsAfter(aDoc(tid, request.auth.uid))
@@ -66,10 +83,22 @@ service cloud.firestore {
         && resource.data.status != 'settled'
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['name', 'date', 'status', 'entrants', 'entrantIds', 'winnerId', 'finalOdds', 'refunded', 'ranks'])
-        && request.resource.data.status in ['open', 'closed', 'settled']
+        && request.resource.data.status in ['entry', 'open', 'closed', 'settled']
+        // エントリー受付には戻せない
+        && (request.resource.data.status != 'entry' || resource.data.status == 'entry')
         && (request.resource.data.status != 'settled' || resource.data.status == 'closed')
-        && request.resource.data.entrantIds.size() >= 2;
+        && (request.resource.data.entrantIds.size() >= 2 || request.resource.data.status == 'entry');
       allow delete: if isAdmin(tid);
+
+      // エントリー（参加者が自分で登録。ドキュメント ID は匿名ユーザーの uid）
+      match /entries/{uid} {
+        allow read: if true;
+        allow create, update: if signedIn() && request.auth.uid == uid
+          && get(tDoc(tid)).data.status == 'entry'
+          && validEntry(request.resource.data);
+        allow delete: if isAdmin(tid)
+          || (signedIn() && request.auth.uid == uid && get(tDoc(tid)).data.status == 'entry');
+      }
 
       // 管理者キー（管理者のみ閲覧可）
       match /private/{docId} {

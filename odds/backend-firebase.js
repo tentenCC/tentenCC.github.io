@@ -51,7 +51,7 @@ export function createFirebaseBackend(config) {
     },
 
     watchTournament(tid, cb, onErr) {
-      const state = { t: undefined, users: [], bets: [], uid: null, isAdmin: false, adminKey: null };
+      const state = { t: undefined, users: [], bets: [], entries: [], uid: null, isAdmin: false, adminKey: null };
       let tAdmin = false, tKey = null, siteAdmin = false, fetchedKey = null;
       // サイト管理者は全大会の管理者。大会の管理者キーは private/admin から取得
       const updateAdmin = () => {
@@ -71,6 +71,7 @@ export function createFirebaseBackend(config) {
         unsubs.push(onSnapshot(tRef(tid), s => { state.t = s.exists() ? { id: s.id, ...s.data() } : null; emit(); }, onErr));
         unsubs.push(onSnapshot(sub(tid, 'users'), s => { state.users = s.docs.map(d => ({ id: d.id, ...d.data() })); emit(); }, onErr));
         unsubs.push(onSnapshot(sub(tid, 'bets'), s => { state.bets = s.docs.map(d => ({ id: d.id, ...d.data() })); emit(); }, onErr));
+        unsubs.push(onSnapshot(sub(tid, 'entries'), s => { state.entries = s.docs.map(d => ({ id: d.id, ...d.data() })); emit(); }, onErr));
         unsubs.push(onSnapshot(subDoc(tid, 'admins', u), s => {
           tAdmin = s.exists(); tKey = s.exists() ? s.data().key : null; updateAdmin(); emit();
         }, () => {}));
@@ -79,14 +80,15 @@ export function createFirebaseBackend(config) {
       return () => { stopped = true; unsubs.forEach(f => f()); };
     },
 
-    async createTournament({ name, date, teams, initialPoints, takeout }) {
+    // status: 'open'（管理者がチームを入力）/ 'entry'（参加者のエントリーを受け付ける）
+    async createTournament({ name, date, teams, initialPoints, takeout, status = 'open' }) {
       await ready;
       const ref = doc(collection(db, 'tournaments'));
       const key = randomHex(12);
       const ents = teams.map(tm => ({ id: randomHex(4), name: tm.name, memberIds: tm.memberIds }));
       const b = writeBatch(db);
       b.set(ref, {
-        name, date, status: 'open', takeout, initialPoints, ownerUid: uid,
+        name, date, status, takeout, initialPoints, ownerUid: uid,
         entrants: ents, entrantIds: ents.map(e => e.id),
         winnerId: null, finalOdds: null, refunded: false, ranks: null, createdAt: Date.now(),
       });
@@ -99,6 +101,22 @@ export function createFirebaseBackend(config) {
     async join(tid, name, initialPoints) {
       await ready;
       await setDoc(subDoc(tid, 'users', uid), { name, points: initialPoints, lastBet: '', joinedAt: Date.now() });
+    },
+
+    // ---------- エントリー（1 端末 1 件、ID は匿名ユーザーの uid） ----------
+    async saveEntry(tid, entry) {
+      await ready;
+      const now = Date.now();
+      await setDoc(subDoc(tid, 'entries', uid), { ...entry, createdAt: entry.createdAt || now, updatedAt: now });
+    },
+    async deleteEntry(tid, entryId) {
+      await ready;
+      await deleteDoc(subDoc(tid, 'entries', entryId || uid));
+    },
+    // エントリー締切：エントリーをチームとして大会に追加し、投票を開始する
+    async closeEntries(tid, raw, newEntrants) {
+      const ents = [...raw.t.entrants, ...newEntrants];
+      await updateDoc(tRef(tid), { entrants: ents, entrantIds: ents.map(e => e.id), status: 'open' });
     },
 
     async placeBet(tid, entrantId, amount) {
@@ -191,6 +209,7 @@ export function createFirebaseBackend(config) {
       const groups = [
         ...raw.bets.map(b => batch => batch.delete(subDoc(tid, 'bets', b.id))),
         ...raw.users.map(u => batch => batch.delete(subDoc(tid, 'users', u.id))),
+        ...(raw.entries || []).map(x => batch => batch.delete(subDoc(tid, 'entries', x.id))),
       ];
       // 最後のバッチで管理者情報と大会本体を削除（管理者判定が先に消えないように）
       groups.push(batch => {

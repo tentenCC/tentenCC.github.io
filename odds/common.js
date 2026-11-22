@@ -64,6 +64,10 @@ export function parseTeams(text) {
 }
 export const splitNames = text => [...new Set(String(text || '').split(/[,、，/／\n]/).map(s => s.trim().slice(0, 40)).filter(Boolean))];
 
+// エントリーの選択肢
+export const TEAM_TAGS = Array.from({ length: 26 }, (_, i) => 'チーム' + String.fromCharCode(65 + i)); // チームA〜チームZ
+export const SERVERS = ['アジアサーバー', '日本サーバー', 'どちらでもよい'];
+
 // メンバーのロール（選択式）。未設定は ''
 export const ROLES = ['初心者', 'OB', '保護者', '天上人'];
 export const validRole = r => ROLES.includes(r) ? r : '';

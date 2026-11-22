@@ -73,6 +73,7 @@ button.wide{width:100%}
 .lib .date{font-size:11px;color:var(--muted)}
 .lib button{font-size:12px;padding:4px 8px}
 .lib .none{font-size:13px;color:var(--muted);padding:6px 0}
+select.sel{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font:inherit;font-size:14px;background:#fff}
 .legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:8px;flex-wrap:wrap}
 .legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:-2px;border:2px solid var(--c);background:var(--f)}
 </style>
@@ -81,6 +82,20 @@ button.wide{width:100%}
 <header><h1>🏆 トーナメントメーカー</h1></header>
 <main>
   <div class="side">
+  <section class="card">
+    <h2>大会オッズから参加者を読み込み</h2>
+    <label for="oddsSel" style="margin-top:4px">大会</label>
+    <select id="oddsSel" class="sel"><option value="">（大会一覧を読み込み中…）</option></select>
+    <label for="oddsFmt">参加者の表示</label>
+    <select id="oddsFmt" class="sel">
+      <option value="team">チーム名</option>
+      <option value="tagteam">チームタグ＋チーム名</option>
+      <option value="members">チーム名（メンバー）</option>
+    </select>
+    <button class="wide" id="oddsLoad" style="margin-top:10px">⬇ 参加者欄に読み込む</button>
+    <div class="count" id="oddsMsg">エントリーされたチーム（エントリー受付中の大会はその時点のエントリー）を参加者欄に入れます。</div>
+  </section>
+
   <section class="card">
     <h2>トーナメント作成</h2>
     <label for="title">大会名</label>
@@ -774,6 +789,100 @@ if (state && state.drawRemaining){ fillRemainingRandomly(); save(); } // 抽選�
 if (state){ $('title').value = state.title || ''; $('names').value = state.names || ''; $('third').checked = !!state.third; $('layout').value = state.layout === 'split' ? 'split' : 'one'; }
 $('count').textContent = parseNames().length + ' 人';
 render();
+</script>
+<script type="module">
+// ---------- 大会オッズ（odds/）から参加者を読み込む ----------
+// 大会・エントリー・メンバーは誰でも読める（firestore.rules）ので、ログインせずに読み取りだけ行う
+// URL に ?demo=1 を付けると、大会オッズのデモモード（このブラウザの localStorage）から読む
+const byId = id => document.getElementById(id);
+const demo = new URLSearchParams(location.search).has('demo');
+let fsApi = null;
+async function oddsApi() {
+  if (demo) {
+    const d = (() => { try { return JSON.parse(localStorage.getItem('oddsDemoDB')); } catch (e) { return null; } })() || { tournaments: {}, members: {} };
+    return {
+      list: async () => Object.entries(d.tournaments).map(([id, x]) => ({ id, ...x.t })).sort((a, b) => b.createdAt - a.createdAt),
+      get: async id => {
+        const x = d.tournaments[id];
+        return x ? { t: { id, ...x.t }, entries: Object.entries(x.entries || {}).map(([eid, e]) => ({ id: eid, ...e })) } : { t: null, entries: [] };
+      },
+      members: async () => Object.fromEntries(Object.entries(d.members || {}).map(([id, m]) => [id, m.name])),
+    };
+  }
+  if (fsApi) return fsApi;
+  const { firebaseConfig } = await import('./odds/firebase-config.js');
+  const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
+  const F = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
+  const db = F.getFirestore(initializeApp(firebaseConfig, 'tournament-maker'));
+  const all = async ref => (await F.getDocs(ref)).docs.map(s => ({ id: s.id, ...s.data() }));
+  fsApi = {
+    list: () => all(F.query(F.collection(db, 'tournaments'), F.orderBy('createdAt', 'desc'), F.limit(50))),
+    get: async id => {
+      const s = await F.getDoc(F.doc(db, 'tournaments', id));
+      const t = s.exists() ? { id, ...s.data() } : null;
+      // エントリーは受付中の大会だけ読む（締切後はチームに変換済み）
+      const entries = t && t.status === 'entry' ? await all(F.collection(db, 'tournaments', id, 'entries')) : [];
+      return { t, entries };
+    },
+    members: async () => Object.fromEntries((await all(F.collection(db, 'members'))).map(m => [m.id, m.name])),
+  };
+  return fsApi;
+}
+const STATUS = { entry: 'エントリー受付中', open: '投票受付中', closed: '締切', settled: '確定' };
+const msg = t => { byId('oddsMsg').textContent = t; };
+
+async function loadList() {
+  const sel = byId('oddsSel');
+  try {
+    const list = await (await oddsApi()).list();
+    sel.innerHTML = '<option value="">大会を選んでください</option>' + list.map(t => {
+      const o = document.createElement('option');
+      o.value = t.id; o.textContent = `${t.name}${t.date ? '（' + t.date + '）' : ''} ／ ${STATUS[t.status] || ''}`;
+      return o.outerHTML;
+    }).join('');
+    if (!list.length) sel.innerHTML = '<option value="">大会がありません</option>';
+  } catch (e) {
+    console.error(e);
+    sel.innerHTML = '<option value="">大会一覧を読み込めませんでした</option>';
+  }
+}
+
+byId('oddsLoad').onclick = async () => {
+  const id = byId('oddsSel').value;
+  if (!id) { msg('大会を選んでください'); return; }
+  const btn = byId('oddsLoad'); btn.disabled = true;
+  try {
+    const api = await oddsApi();
+    const [{ t, entries }, members] = await Promise.all([api.get(id), api.members()]);
+    if (!t) { msg('大会が見つかりません'); return; }
+    // エントリー受付中は「管理者が追加したチーム＋エントリー」、締切後はチーム一覧（エントリーはチームに変換済み）
+    const teams = (t.entrants || []).map(e => ({ name: e.name, tag: e.tag || '', members: (e.memberIds || []).map(m => members[m] || '') }));
+    if (t.status === 'entry') {
+      entries.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).forEach(x => teams.push({
+        name: x.teamName, tag: x.teamTag || '',
+        members: [[x.selfId, x.selfName], [x.partnerId, x.partnerName]].map(([mid, n]) => members[mid] || n || ''),
+      }));
+    }
+    if (!teams.length) { msg('この大会にはまだチームがありません'); return; }
+    const fmt = byId('oddsFmt').value;
+    const lines = teams.map(tm => {
+      const ms = tm.members.filter(Boolean);
+      if (fmt === 'tagteam' && tm.tag) return `${tm.tag} ${tm.name}`;
+      if (fmt === 'members' && ms.length) return `${tm.name}（${ms.join('・')}）`;
+      return tm.name;
+    });
+    const names = byId('names');
+    if (names.value.trim() && !confirm('参加者欄の内容を、読み込んだチームで置き換えますか？')) return;
+    names.value = lines.join('\n');
+    names.dispatchEvent(new Event('input'));
+    if (!byId('title').value.trim()) byId('title').value = t.name;
+    msg(`${teams.length} チームを読み込みました${t.status === 'entry' ? '（エントリー受付中のため、現時点のエントリーです）' : ''}。「トーナメント表を作成」または「ルーレットで抽選して作成」を押してください。`);
+  } catch (e) {
+    console.error(e);
+    msg('読み込めませんでした：' + (e.message || e));
+  } finally { btn.disabled = false; }
+};
+loadList();
 </script>
 </body>
 </html>

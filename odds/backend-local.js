@@ -43,25 +43,26 @@ export function createLocalBackend() {
     watchTournament(tid, cb) {
       return subscribe(() => {
         const d = load(), x = d.tournaments[tid];
-        if (!x) return cb({ t: null, users: [], bets: [], uid, isAdmin: false, adminKey: null });
+        if (!x) return cb({ t: null, users: [], bets: [], entries: [], uid, isAdmin: false, adminKey: null });
         const admin = !!x.admins[uid] || isSite(d);
         cb({
           t: { id: tid, ...x.t },
           users: Object.entries(x.users).map(([id, u]) => ({ id, ...u })),
           bets: Object.entries(x.bets).map(([id, b]) => ({ id, ...b })),
+          entries: Object.entries(x.entries || {}).map(([id, e]) => ({ id, ...e })),
           uid, isAdmin: admin, adminKey: admin ? x.key : null,
         });
       });
     },
 
-    createTournament: async ({ name, date, teams, initialPoints, takeout }) => {
+    createTournament: async ({ name, date, teams, initialPoints, takeout, status = 'open' }) => {
       const d = load(); requireSite(d);
       const id = randomHex(10), key = randomHex(12);
       const ents = teams.map(tm => ({ id: randomHex(4), name: tm.name, memberIds: tm.memberIds }));
       d.tournaments[id] = {
-        t: { name, date, status: 'open', takeout, initialPoints, ownerUid: uid, entrants: ents, entrantIds: ents.map(e => e.id),
+        t: { name, date, status, takeout, initialPoints, ownerUid: uid, entrants: ents, entrantIds: ents.map(e => e.id),
              winnerId: null, finalOdds: null, refunded: false, ranks: null, createdAt: Date.now() },
-        key, admins: { [uid]: true }, users: {}, bets: {},
+        key, admins: { [uid]: true }, users: {}, bets: {}, entries: {},
       };
       save(d);
       return { id, adminKey: key };
@@ -70,6 +71,25 @@ export function createLocalBackend() {
     join: (tid, name, initialPoints) => mutate(tid, x => {
       if (x.t.status === 'settled') throw new Error('この大会は確定済みです');
       x.users[uid] = { name, points: initialPoints, lastBet: '', joinedAt: Date.now() };
+    }),
+
+    saveEntry: (tid, entry) => mutate(tid, x => {
+      if (x.t.status !== 'entry') throw new Error('エントリーの受付は終了しています');
+      x.entries ||= {};
+      const now = Date.now();
+      x.entries[uid] = { ...entry, createdAt: entry.createdAt || now, updatedAt: now };
+    }),
+    deleteEntry: (tid, entryId) => mutate(tid, (x, d) => {
+      const id = entryId || uid;
+      if (id !== uid) requireAdmin(x, d);
+      else if (x.t.status !== 'entry') throw new Error('エントリーの受付は終了しています');
+      delete (x.entries || {})[id];
+    }),
+    closeEntries: (tid, raw, newEntrants) => mutate(tid, (x, d) => {
+      requireAdmin(x, d);
+      x.t.entrants = [...x.t.entrants, ...newEntrants];
+      x.t.entrantIds = x.t.entrants.map(e => e.id);
+      x.t.status = 'open';
     }),
 
     placeBet: (tid, entrantId, amount) => mutate(tid, x => {
